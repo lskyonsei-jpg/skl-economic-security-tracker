@@ -1,0 +1,15 @@
+.venv/
+.gta_api_key.xml
+.cf_api_token.xml
+.site_users.json
+cache/
+logs/
+output/
+__pycache__/
+site/
+node_modules/
+.wrangler/
+
+site_prev/
+*.log
+*.lnk

@@ -1,0 +1,9 @@
+{
+  "name": "skl-economic-security-tracker-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SKL Economic Security Tracker 변경 내역 사이트 배포 도구",
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
