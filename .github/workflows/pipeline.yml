@@ -29,9 +29,9 @@ on:
         type: boolean
         default: false
       ai_coop:
-        description: "한미 AI 협력: 표본 재코딩 검증 (Claude API 비용 발생)"
+        description: "한미 AI 협력: 결정 반영 + 일일 판단 요청 실행 (Claude API 비용 발생)"
         type: choice
-        options: [none, daily, recode-medium, recode-high]
+        options: [none, daily]
         default: none
       mail:
         description: "끝나면 결과 메일 보내기 (MAIL_USER·MAIL_PASS 필요)"
@@ -43,6 +43,7 @@ permissions:
   pages: write
   id-token: write
   issues: write
+  actions: write   # 정리 단계: 아티팩트·옛 실행 기록 삭제
 
 concurrency:
   group: pipeline
@@ -148,23 +149,6 @@ jobs:
           python ai_coop_tasks.py daily
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: 한미 AI 협력 — 표본 재코딩 검증
-        id: ai_coop
-        if: github.event.inputs.ai_coop == 'recode-high' || github.event.inputs.ai_coop == 'recode-medium'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          EFFORT=$(echo "${{ github.event.inputs.ai_coop }}" | sed 's/recode-//')
-          python collect_ai_coop.py recode --effort "$EFFORT"
-
-      - name: 재코딩 결과 아티팩트
-        if: steps.ai_coop.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-coop-recode-${{ github.run_id }}
-          path: data/ai_coop_recode_*.json
-          retention-days: 30
-
       - name: Release "state" 올리기
         if: steps.gta.outputs.changed == 'true' || steps.reference.outputs.changed == 'true' || steps.ai_daily.outputs.changed == 'true'
         env:
@@ -195,7 +179,7 @@ jobs:
             echo "## pipeline"
             echo
             echo "- GTA 모드: ${{ steps.plan.outputs.mode }} / 변경: ${{ steps.gta.outputs.changed || 'n/a' }}"
-            echo "- 기준자료: ${{ steps.reference.outputs.changed || '건너뜀' }} / AI 협력: ${{ github.event.inputs.ai_coop || 'none' }}"
+            echo "- 기준자료: ${{ steps.reference.outputs.changed || '건너뜀' }} / AI 협력 일일 실행: ${{ steps.ai_daily.outcome }}"
             echo "- state.json: $(tr -d '\n' < cache/state.json | cut -c1-200)"
             echo "- site: $(find site -type f | wc -l)개 파일, $(du -sh site | cut -f1)"
             R=$(ls logs/change_report_*.md 2>/dev/null | tail -1)
@@ -246,3 +230,19 @@ jobs:
           subject: ${{ steps.mail.outputs.subject }}
           html_body: file://mail.md
           convert_markdown: true
+
+      # ---- 정리: 이 실행의 아티팩트만 남기고 지우고, 30일 지난 실행 기록을 지운다(Actions 탭에 쌓이지 않게).
+      - name: 아티팩트·옛 실행 기록 정리
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const arts = await github.paginate(github.rest.actions.listArtifactsForRepo, {owner, repo, per_page: 100});
+            let a = 0;
+            for (const x of arts) if (x.workflow_run?.id !== context.runId) { await github.rest.actions.deleteArtifact({owner, repo, artifact_id: x.id}); a++; }
+            const cutoff = Date.now() - 30 * 86400e3;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {owner, repo, per_page: 100});
+            let r = 0;
+            for (const x of runs) if (x.id !== context.runId && new Date(x.created_at).getTime() < cutoff && x.status === 'completed') { await github.rest.actions.deleteWorkflowRun({owner, repo, run_id: x.id}); r++; }
+            core.info(`아티팩트 ${a}개, 실행 기록 ${r}개 삭제`);

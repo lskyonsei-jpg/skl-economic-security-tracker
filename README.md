@@ -29,8 +29,12 @@
 4. `ai_coop_tasks.py apply` → `daily` — 연구자 결정(판단 대기 페이지에서 제출한 Issue 또는 `data/ai_coop_decisions.csv`) 반영 후, 탐지 → A·B·C 제안을 `review.html` 에 게시. AI 는 직접 반영하지 않는다
 5. 바뀐 자산만 Release `state` 에 다시 올림
 6. `publish_site.py` → `site/` → GitHub Pages
+7. 메일(`MAIL_USER`·`MAIL_PASS` 있을 때): 예약 실행 결과와 모든 실패. 수동 실행의 `mail` 입력이나 커밋 메시지 `[mail]` 로도 보낼 수 있다
+8. 정리: 이 실행 것 외 아티팩트와 30일 지난 실행 기록 삭제
 
-코드만 push 하면 자료 갱신 없이 빌드·배포만 한다. `문서/` 는 코드북 2종(`코드북_패널.md`, `코드북.md`)만 빌드를 일으킨다. 수동 실행(Actions → pipeline → Run workflow)에서 모드와 기준자료 수집 여부를 고른다.
+패널 2 Agent 의 단계별 동작은 사이트 코드북(`문서/코드북_패널.md` "업데이트 Agent 작동 순서").
+
+코드만 push 하면 자료 갱신 없이 빌드·배포만 한다. `문서/` 는 코드북 2종(`코드북_패널.md`, `코드북.md`)만 빌드를 일으킨다. 수동 실행(Actions → pipeline → Run workflow)에서 GTA 모드, 기준자료 수집, AI 협력 일일 실행, 메일 여부를 고른다.
 
 ## 비밀값 (Settings → Secrets and variables → Actions)
 
