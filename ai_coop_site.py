@@ -213,7 +213,7 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   FORMS.forEach((f,i)=>{{const yy=T+20+laneH*i+laneH/2; s+=`<text class="tl-axis" x="${{L-10}}" y="${{yy+8}}" text-anchor="end">${{f}}</text>`;}});
   E.forEach((e,i)=>{{const li=Math.max(FORMS.indexOf(e.form),0); const yy=T+20+laneH*li+laneH/2+((i%5)-2)*4; s+=`<circle data-i="${{i}}" cx="${{x(e.date)}}" cy="${{yy}}" r="7" fill="${{FORM_COLOR[e.form]||css('--muted')}}" fill-opacity=".85"/>`;}});
   svg.innerHTML=s;
-  svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`<b>${{e.date}} · ${{e.form}}</b><br>${{e.content}}<br><span style="opacity:.8">${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}${{e.amount?' · '+e.amount:''}}</span>`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
+  svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
   svg.addEventListener('mouseleave',()=>tip.style.display='none');
   const tb=document.querySelector('#records tbody'); const esc=t=>String(t).replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}})[c]);
   const ORGS=D.orgs||{{}}; let orgSel=null;
@@ -287,9 +287,11 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                 f'<label><input type="radio" name="d-{pid}" value="approve"> 승인</label>'
                 f'<label><input type="radio" name="d-{pid}" value="reject"> 기각</label>'
                 f'<label><input type="radio" name="d-{pid}" value="hold"> 보류</label>'
+                f'<label><input type="radio" name="d-{pid}" value="other"> 기타</label>'
+                f'<input type="text" class="other-note" data-note="{pid}" placeholder="의견·수정 지시 (예: 금액은 20으로, 형태는 집행, 주체에 기아 추가)" hidden>'
+                + (f'<span class="small hold-note">어제 의견: {_esc(p.get("hold_note"))}</span>' if p.get("hold_note") else "") +
                 f'<details class="rmore"><summary><span class="btn small"></span></summary>{body}'
                 f'<p class="note">원문 발췌({_esc(e.get("via", ""))} · {_esc(e.get("chars", ""))}자): {_esc(str(e.get("excerpt", ""))[:300])}…</p>'
-                f'<textarea data-note="{pid}" placeholder="의견이나 수정 지시 (예: 금액은 20으로, 형태는 집행이 맞음, 주체에 기아 추가)"></textarea>'
                 f'</details></div></div>')
     sections = []
     titles = {"A": "새 사건 후보", "B": "기존 사건 갱신 후보", "C": "기존 판단 재검토"}
@@ -350,17 +352,19 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
   const cards=[...document.querySelectorAll('.decide')];
   const count=()=>{const n=Object.values(D).filter(x=>x.decision).length;document.getElementById('decided-count').textContent='선택 '+n+'건';};
   cards.forEach(c=>{const id=c.dataset.id; const d=D[id]||{};
-    c.querySelectorAll('input[type=radio]').forEach(r=>{if(d.decision===r.value)r.checked=true; r.addEventListener('change',()=>{D[id]=Object.assign(D[id]||{},{decision:r.value});save(D);count();});});
-    const ta=c.querySelector('textarea'); if(d.note){ta.value=d.note; c.querySelector('details.rmore').open=true;} ta.addEventListener('input',()=>{D[id]=Object.assign(D[id]||{},{note:ta.value});save(D);});
+    const ta=c.querySelector('input.other-note'); const showNote=on=>{ta.hidden=!on; if(on)ta.focus();};
+    c.querySelectorAll('input[type=radio]').forEach(r=>{if(d.decision===r.value)r.checked=true; r.addEventListener('change',()=>{D[id]=Object.assign(D[id]||{},{decision:r.value});save(D);count();showNote(r.value==='other'||!!(D[id].note&&D[id].note.trim()));});});
+    if(d.note)ta.value=d.note; if(d.decision==='other'||d.note)ta.hidden=false; ta.addEventListener('input',()=>{D[id]=Object.assign(D[id]||{},{note:ta.value});save(D);});
   });
   count();
   document.querySelectorAll('.open-all').forEach(b=>b.addEventListener('click',()=>{const ds=[...b.closest('.rsec').querySelectorAll('details.rmore')];const open=ds.some(d=>!d.open);ds.forEach(d=>d.open=open);b.textContent=open?'모두 닫기':'모두 열기';}));
-  const lines=()=>Object.entries(D).filter(([id,d])=>d.decision||(d.note&&d.note.trim())).map(([id,d])=>'- '+id+': '+(d.decision||'hold')+(d.note&&d.note.trim()?' | 의견: '+d.note.trim().replace(/\\s*\\n+\\s*/g,' / '):''));
+  const word=x=>x==='other'?'hold':(x||'hold');   // 기타 = 보류 + 의견 (자동 반영 없음, 다음 날 카드에 의견이 남는다)
+  const lines=()=>Object.entries(D).filter(([id,d])=>d.decision||(d.note&&d.note.trim())).map(([id,d])=>'- '+id+': '+word(d.decision)+(d.note&&d.note.trim()?' | 의견: '+d.note.trim().replace(/\\s*\\n+\\s*/g,' / '):''));
   document.getElementById('submit-decisions').addEventListener('click',()=>{const L=lines(); if(!L.length){alert('선택된 결정이 없습니다.');return;}
     const today=new Date().toISOString().slice(0,10); const body='## 결정 '+today+'\\n\\n'+L.join('\\n')+'\\n\\n(판단 대기 페이지에서 제출. 다음 자동 실행 때 반영됩니다.)';
     const url='https://github.com/'+REPO+'/issues/new?labels=ai-coop-decision&title='+encodeURIComponent('[결정] '+today)+'&body='+encodeURIComponent(body);
-    window.open(url,'_blank'); D={}; save(D); cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false); c.querySelector('textarea').value='';}); count();});
-  document.getElementById('clear-decisions').addEventListener('click',()=>{D={};save(D);cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false);c.querySelector('textarea').value='';});count();});
+    window.open(url,'_blank'); D={}; save(D); cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false); const t=c.querySelector('input.other-note'); t.value=''; t.hidden=true;}); count();});
+  document.getElementById('clear-decisions').addEventListener('click',()=>{D={};save(D);cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false);const t=c.querySelector('input.other-note'); t.value=''; t.hidden=true;});count();});
 })();
 </script>""" % json.dumps(REPO)
     body = "".join(sections) + howto + submit_bar + script

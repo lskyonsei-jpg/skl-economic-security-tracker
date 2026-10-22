@@ -419,8 +419,9 @@ def render_judgment(today: str, props: list[dict], budget: "Budget", stats: dict
     return "\n".join(lines)
 
 
-DECISION_WORDS = {"approve": "approved", "승인": "approved", "reject": "rejected", "기각": "rejected", "hold": "hold", "보류": "hold"}
-DECISION_LINE = re.compile(r"^[-*]?\s*([ABC]-\d{4}-\d{2}-\d{2}-\d{2}|[ABC]-\d{8}-\d{2})\s*[:：]\s*(approve|reject|hold|승인|기각|보류)\s*(?:\|\s*의견\s*[:：]\s*(.*))?\s*$", re.I | re.M)
+DECISION_WORDS = {"approve": "approved", "승인": "approved", "reject": "rejected", "기각": "rejected", "hold": "hold", "보류": "hold",
+                  "other": "hold", "기타": "hold"}   # 기타 = 의견만 남기고 보류
+DECISION_LINE = re.compile(r"^[-*]?\s*([ABC]-\d{4}-\d{2}-\d{2}-\d{2}|[ABC]-\d{8}-\d{2})\s*[:：]\s*(approve|reject|hold|other|승인|기각|보류|기타)\s*(?:\|\s*의견\s*[:：]\s*(.*))?\s*$", re.I | re.M)
 
 
 def read_decisions() -> dict[str, dict]:
