@@ -94,7 +94,8 @@ def aggregate(events: list[dict]) -> dict:
 
 
 def nav(current: str) -> str:
-    links = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"), ("review.html", "Review"), ("data.html", "Data")]
+    links = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"), ("review.html", "Review"),
+             ("data.html", "Data"), ("codebook.html", "Codebook")]
     cur = ' aria-current="page"'
     items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in links)
     return (f'<nav class="site-nav"><div class="wrap"><a class="brand" href="index.html">'
@@ -112,7 +113,7 @@ def render(agg: dict, meta: dict) -> str:
     asof = meta.get("fetched_at", "")[:10] or "—"
     built = datetime.now().strftime("%Y-%m-%d %H:%M")
     if n == 0:
-        body = ('<div class="wrap section"><div class="empty">아직 사건 자료가 없습니다. data/seed 의 CSV 나 자동 수집 결과가 들어오면 채워집니다.</div></div>')
+        body = ('<div class="wrap section"><div class="empty">아직 사건 자료가 없습니다.</div></div>')
         return _page("한미 AI 협력 트래커", "", body, asof, built)
 
     def pct(c: int) -> str:
@@ -129,7 +130,7 @@ def render(agg: dict, meta: dict) -> str:
         rows.append(f'<tr><td>{html.escape(s)}</td>{cells}<td class="cell"><b>{total}</b><small>{pct(total)}</small></td></tr>')
     matrix_html = (f'<table class="matrix"><thead><tr><th>분야</th>{head}<th class="num">합계</th></tr></thead>'
                    f'<tbody>{"".join(rows)}</tbody></table>'
-                   f'<p class="note">셀 = 사건 수와 전체 {n}건 대비 비중. 한 사건이 분야 여러 개에 걸리면 각 분야에 센다(분야 합계는 {n}건을 넘을 수 있다).</p>')
+                   f'<p class="note">건수 · 전체 {n}건 대비 비중. 여러 분야에 걸친 사건은 분야마다 집계.</p>')
 
     # 형태별 막대
     bars = "".join(
@@ -160,10 +161,10 @@ def render(agg: dict, meta: dict) -> str:
   </section>
   <section class="section">
     <span class="eyebrow">Records</span>
-    <div class="panel"><div class="panel-head"><span>사건 목록 (최신순)</span><input id="q" type="search" placeholder="검색…" style="min-height:34px"></div>
-      <div class="panel-body" style="overflow-x:auto"><table id="records"><thead><tr><th>날짜</th><th>상태</th><th>형태</th><th>분야</th><th>미국 측</th><th>한국 측</th><th>내용</th><th>규모</th><th>원문</th></tr></thead><tbody></tbody></table></div></div>
+    <div class="panel"><details class="records-toggle" id="records-box"><summary><span class="btn small"></span><span>사건 목록 {n}건 (최신순)</span><input id="q" type="search" placeholder="검색" onclick="event.preventDefault()"></summary>
+      <div class="tablebox"><table id="records"><thead><tr><th>날짜</th><th>상태</th><th>형태</th><th>분야</th><th>미국 측</th><th>한국 측</th><th>내용</th><th>규모</th><th>원문</th></tr></thead><tbody></tbody></table></div></details></div>
   </section>
-  <details><summary>방법론</summary><p class="note">분석 단위는 사건 하나다. 상태 '확정'은 연구자가 코딩한 사건, '자동'은 모델(Claude)이 기사에서 추출한 사건이며 확정 라벨이 아니다. 형태(MOU·의향/선언/집행/확정계약)는 발표 시점의 구속력 기준이다. 규모는 통화와 명목·추정이 섞여 있어 합산하지 않고 원문 그대로 보인다. 행정부 경계선은 미국 대통령 취임일이다.</p></details>
+  <p class="note">'확정'은 연구자 코딩, '자동'은 모델 코딩. 형태·분야·금액 기준은 <a href="codebook.html#panel2">코드북</a>.</p>
 </div>
 <script>
 const FORMS={json.dumps(agg["forms"], ensure_ascii=False)};
@@ -173,22 +174,22 @@ const FORM_COLOR={{}};FORMS.forEach((f,i)=>FORM_COLOR[f]=css('--cat-'+(i+1)));
 fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   const E=D.events; const tip=document.getElementById('tl-tip');
   document.getElementById('tl-legend').innerHTML=FORMS.map(f=>`<span><i style="background:${{FORM_COLOR[f]}}"></i>${{f}}</span>`).join('');
-  const svg=document.getElementById('timeline'); const W=1000,H=300,L=40,R=20,T=30,B=40;
+  const svg=document.getElementById('timeline'); const W=1000,H=360,L=150,R=24,T=44,B=50;
   const t0=new Date(E[0].date+'T00:00:00Z'), t1=new Date(E[E.length-1].date+'T00:00:00Z');
   const y0=t0.getUTCFullYear(), y1=t1.getUTCFullYear()+1;
   const x=d=>L+(new Date(d+'T00:00:00Z')-Date.UTC(y0,0,1))/(Date.UTC(y1,0,1)-Date.UTC(y0,0,1))*(W-L-R);
   let s='';
-  for(let y=y0;y<=y1;y++){{const xx=x(y+'-01-01');s+=`<line x1="${{xx}}" x2="${{xx}}" y1="${{T}}" y2="${{H-B}}" stroke="${{css('--line')}}"/><text class="tl-axis" x="${{xx+3}}" y="${{H-B+16}}">${{y}}</text>`;}}
-  ADMIN.forEach(([name,d])=>{{const yy=d.slice(0,4); if(yy<y0||yy>y1)return; const xx=x(d); s+=`<line x1="${{xx}}" x2="${{xx}}" y1="${{T-10}}" y2="${{H-B}}" stroke="${{css('--ink')}}" stroke-dasharray="3 3"/><text class="tl-admin" x="${{xx+4}}" y="${{T-2}}">${{name}}</text>`;}});
+  for(let y=y0;y<=y1;y++){{const xx=x(y+'-01-01');s+=`<line x1="${{xx}}" x2="${{xx}}" y1="${{T}}" y2="${{H-B}}" stroke="${{css('--line')}}"/>`; if((y-y0)%2===0||y1-y0<8) s+=`<text class="tl-axis" x="${{xx+4}}" y="${{H-B+26}}">${{y}}</text>`;}}
+  ADMIN.forEach(([name,d])=>{{const yy=d.slice(0,4); if(yy<y0||yy>y1)return; const xx=x(d); s+=`<line x1="${{xx}}" x2="${{xx}}" y1="${{T-14}}" y2="${{H-B}}" stroke="${{css('--ink')}}" stroke-dasharray="3 3"/><text class="tl-admin" x="${{xx+6}}" y="${{T-2}}">${{name}}</text>`;}});
   const lanes=FORMS.length, laneH=(H-T-B-20)/Math.max(lanes,1);
-  FORMS.forEach((f,i)=>{{const yy=T+20+laneH*i+laneH/2; s+=`<text class="tl-axis" x="${{L-4}}" y="${{yy+4}}" text-anchor="end">${{f.slice(0,4)}}</text>`;}});
-  E.forEach((e,i)=>{{const li=Math.max(FORMS.indexOf(e.form),0); const yy=T+20+laneH*li+laneH/2+((i%5)-2)*3; s+=`<circle data-i="${{i}}" cx="${{x(e.date)}}" cy="${{yy}}" r="4.5" fill="${{FORM_COLOR[e.form]||css('--muted')}}" fill-opacity=".85"/>`;}});
+  FORMS.forEach((f,i)=>{{const yy=T+20+laneH*i+laneH/2; s+=`<text class="tl-axis" x="${{L-10}}" y="${{yy+8}}" text-anchor="end">${{f}}</text>`;}});
+  E.forEach((e,i)=>{{const li=Math.max(FORMS.indexOf(e.form),0); const yy=T+20+laneH*li+laneH/2+((i%5)-2)*4; s+=`<circle data-i="${{i}}" cx="${{x(e.date)}}" cy="${{yy}}" r="7" fill="${{FORM_COLOR[e.form]||css('--muted')}}" fill-opacity=".85"/>`;}});
   svg.innerHTML=s;
   svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`<b>${{e.date}} · ${{e.form}}</b><br>${{e.content}}<br><span style="opacity:.8">${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}${{e.amount?' · '+e.amount:''}}</span>`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
   svg.addEventListener('mouseleave',()=>tip.style.display='none');
   const tb=document.querySelector('#records tbody'); const esc=t=>String(t).replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}})[c]);
-  const draw=q=>{{const qq=(q||'').toLowerCase(); tb.innerHTML=[...E].reverse().filter(e=>!qq||JSON.stringify(e).toLowerCase().includes(qq)).map(e=>`<tr><td style="white-space:nowrap">${{e.date}}</td><td><span class="chip" style="cursor:default">${{e.status==='confirmed'?'확정':'자동'}}</span></td><td>${{esc(e.form)}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{esc(e.us.join(', '))}}</td><td>${{esc(e.kr.join(', '))}}</td><td>${{esc(e.content)}}</td><td>${{esc(e.amount)}}</td><td>${{e.url?`<a href="${{esc(e.url)}}" target="_blank" rel="noopener">원문</a>`:''}}</td></tr>`).join('');}};
-  draw(''); document.getElementById('q').addEventListener('input',ev=>draw(ev.target.value));
+  const draw=q=>{{const qq=(q||'').toLowerCase(); tb.innerHTML=[...E].reverse().filter(e=>!qq||JSON.stringify(e).toLowerCase().includes(qq)).map(e=>`<tr><td class="d">${{e.date}}</td><td><span class="chip" style="cursor:default">${{e.status==='confirmed'?'확정':'자동'}}</span></td><td>${{esc(e.form)}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{esc(e.us.join(', '))}}</td><td>${{esc(e.kr.join(', '))}}</td><td>${{esc(e.content)}}</td><td>${{esc(e.amount)}}</td><td>${{e.url?`<a href="${{esc(e.url)}}" target="_blank" rel="noopener">원문</a>`:''}}</td></tr>`).join('');}};
+  draw(''); const q=document.getElementById('q'); q.addEventListener('input',ev=>{{draw(ev.target.value); if(ev.target.value) document.getElementById('records-box').open=true;}});
 }});
 </script>'''
     return _page("한미 AI 협력 트래커", hero_meta, body, asof, built)
@@ -200,7 +201,7 @@ def _page(title: str, hero_meta: str, body: str, asof: str, built: str) -> str:
 <title>{html.escape(title)} · SKL</title><link rel="stylesheet" href="site.css"></head>
 <body>{nav("ai_coop.html")}
 <header class="hero"><div class="wrap"><span class="eyebrow">Panel 2</span><h1>{html.escape(title)}</h1>
-<p>미국과 한국의 정부·민간 주체가 맺은 AI 협력 사건을 날짜·형태(MOU·의향/선언/집행/확정계약)·분야별로 추적한다. 연구자 확정 코딩과 모델 자동 코딩을 상태로 구분해 보인다.</p>{hero_meta}</div></header>
+<p>한미 정부·민간의 AI 협력 사건을 날짜·형태·분야별로 추적합니다.</p>{hero_meta}</div></header>
 {body}
 {footer(asof, built)}
 </body></html>'''
@@ -236,7 +237,7 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
         return (f'<div class="panel" style="margin-bottom:14px"><div class="panel-head"><span><b>{_esc(p["id"])}</b> · {_esc(p["created"])}</span>'
                 f'<span>{link}</span></div>'
                 f'<div class="panel-body">{body}'
-                f'<p class="note" style="margin-top:10px">근거({_esc(e.get("via", ""))}, {_esc(e.get("chars", ""))}자, sha256 {_esc(str(e.get("sha256", ""))[:12])}): {_esc(str(e.get("excerpt", ""))[:300])}…</p>'
+                f'<p class="note" style="margin-top:10px">원문 발췌({_esc(e.get("via", ""))} · {_esc(e.get("chars", ""))}자): {_esc(str(e.get("excerpt", ""))[:300])}…</p>'
                 f'<div class="decide" data-id="{_esc(p["id"])}">'
                 f'<label><input type="radio" name="d-{_esc(p["id"])}" value="approve"> 승인</label>'
                 f'<label><input type="radio" name="d-{_esc(p["id"])}" value="reject"> 기각</label>'
@@ -282,13 +283,13 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
             cards.append(card(p, body))
         sections.append(f'<section class="section"><div class="wrap"><span class="eyebrow">{k}. {titles[k]} ({len(items)}건)</span>'
                         + ("".join(cards) if cards else '<div class="empty">없음</div>') + '</div></section>')
-    howto = ('<section class="section"><div class="wrap"><details><summary>결정 방법</summary><p class="note">'
-             '카드마다 승인·기각·보류를 고르고 의견이나 수정 지시를 적은 뒤 아래 "GitHub으로 결정 제출"을 누른다. 결정이 미리 채워진 GitHub 화면이 열리고 초록 버튼 한 번이면 제출된다(GitHub 로그인만 필요). '
-             '다음 자동 실행(매일 06:00 KST)이 제출을 회수해 반영한다. 승인은 그대로 반영, 의견에 수정 지시가 있으면 그 지시대로 값을 고쳐 반영하며 근거에 "연구자 의견"으로 남긴다. 기각은 기록만 한다. 보류는 다음 날에도 남는다. '
-             '입력은 이 브라우저에 임시 저장된다. 대신 <code>data/ai_coop_decisions.csv</code> 를 직접 편집해도 된다. AI 는 어떤 것도 스스로 반영하지 않는다.</p></details></div></section>')
-    submit_bar = ('<div class="submit-bar"><span id="decided-count">선택 0건</span><span class="hint">제출 후 이 화면의 선택은 비워진다</span>'
-                  '<span><button class="btn" id="clear-decisions" type="button">비우기</button> <button class="btn" id="copy-csv" type="button">CSV 복사</button> '
-                  '<button class="btn solid" id="submit-decisions" type="button">GitHub으로 결정 제출</button></span></div>')
+    howto = ('<section class="section"><div class="wrap"><details><summary>제출 방법</summary><p class="note">'
+             '카드마다 승인·기각·보류를 고르고, 고칠 내용이 있으면 의견란에 적습니다. "GitHub으로 제출"을 누르면 내용이 채워진 GitHub Issue 화면이 열리고, 거기서 등록 버튼만 누르면 됩니다(GitHub 로그인 필요). '
+             '다음 날 06:00 자동 실행이 반영합니다. 승인은 그대로, 의견에 수정 지시가 있으면 고쳐서 반영하고, 기각은 기록만 남깁니다. 보류는 다음 날에도 남습니다. '
+             '선택은 이 브라우저에 임시 저장됩니다. <code>data/ai_coop_decisions.csv</code>를 직접 고쳐도 됩니다.</p></details></div></section>')
+    submit_bar = ('<div class="submit-bar"><span id="decided-count">선택 0건</span><span class="hint">제출하면 선택이 초기화됩니다</span>'
+                  '<span><button class="btn" id="clear-decisions" type="button">초기화</button> <button class="btn" id="copy-csv" type="button">CSV 복사</button> '
+                  '<button class="btn solid" id="submit-decisions" type="button">GitHub으로 제출</button></span></div>')
     script = """
 <script>
 (function(){
@@ -305,18 +306,18 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
   count();
   const lines=()=>Object.entries(D).filter(([id,d])=>d.decision||(d.note&&d.note.trim())).map(([id,d])=>'- '+id+': '+(d.decision||'hold')+(d.note&&d.note.trim()?' | 의견: '+d.note.trim().replace(/\\s*\\n+\\s*/g,' / '):''));
   document.getElementById('submit-decisions').addEventListener('click',()=>{const L=lines(); if(!L.length){alert('선택된 결정이 없습니다.');return;}
-    const today=new Date().toISOString().slice(0,10); const body='## 결정 '+today+'\\n\\n'+L.join('\\n')+'\\n\\n(판단 대기 페이지에서 제출. 다음 자동 실행이 반영.)';
+    const today=new Date().toISOString().slice(0,10); const body='## 결정 '+today+'\\n\\n'+L.join('\\n')+'\\n\\n(판단 대기 페이지에서 제출. 다음 자동 실행 때 반영됩니다.)';
     const url='https://github.com/'+REPO+'/issues/new?labels=ai-coop-decision&title='+encodeURIComponent('[결정] '+today)+'&body='+encodeURIComponent(body);
     window.open(url,'_blank'); D={}; save(D); cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false); c.querySelector('textarea').value='';}); count();});
   document.getElementById('copy-csv').addEventListener('click',()=>{const rows=Object.entries(D).filter(([id,d])=>d.decision).map(([id,d])=>id+','+d.decision+',"'+(d.note||'').replace(/"/g,'""')+'",'+new Date().toISOString().slice(0,10));
-    navigator.clipboard.writeText(rows.join('\\n')).then(()=>alert(rows.length+'줄을 복사했습니다. data/ai_coop_decisions.csv 에 붙여 넣으세요.'));});
+    navigator.clipboard.writeText(rows.join('\\n')).then(()=>alert(rows.length+'줄 복사. data/ai_coop_decisions.csv에 붙여 넣으면 됩니다.'));});
   document.getElementById('clear-decisions').addEventListener('click',()=>{D={};save(D);cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false);c.querySelector('textarea').value='';});count();});
 })();
 </script>""" % json.dumps(REPO)
     body = "".join(sections) + howto + submit_bar + script
     head = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<title>판단 대기 · SKL</title><link rel="stylesheet" href="site.css"></head>\n'
     hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Review queue</span><h1>판단 대기</h1>'
-            '<p>자동 탐지·코딩이 낸 제안입니다. A 는 새 사건 후보, B 는 기존 사건의 후속·수정·진행 상태, C 는 기존 판단과 모델 판정이 다른 경우입니다. 연구자가 승인해야 반영됩니다.</p>'
+            '<p>자동 탐지·코딩이 낸 제안입니다. 승인한 것만 반영됩니다.</p>'
             + meta + '</div></header>\n')
     return head + "<body>" + nav("review.html") + "\n" + hero + body + "\n" + footer("", built) + "\n</body></html>"
 

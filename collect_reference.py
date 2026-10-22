@@ -2,7 +2,7 @@
 
   python collect_reference.py [--only bsv dots wdi] [--bsv-file-id N | --bsv-latest]
 
-산출(열 이름은 옛 정적 사본과 같다. ip_risk_site.py·bloc_site.py·build_oil_data.py 가 읽는다)
+산출(열 이름은 옛 정적 사본과 같다. ip_risk_site.py 가 읽는다)
   bsv_ideal_points.tab          탭 구분. ccode iso3c Countryname year NVotesFP IdealPointFP Q5%FP … Q95%FP
   imf_dots_us_cn_total_trade.csv  reporter, partner_iso3, year, trade_total_usd (= 수출 FOB + 수입 CIF)
   wdi_gdp_current_usd.csv       iso3, country, year, gdp_usd (집계 단위 제외)

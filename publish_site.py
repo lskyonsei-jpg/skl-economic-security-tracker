@@ -1,12 +1,13 @@
 """SKL Economic Security Tracker — 변경 내역을 정적 웹사이트로 만든다.
 
 logs/change_report_*.md 를 읽어 site/ 아래에 HTML을 쓴다. 비밀값은 다루지
-않는다. 배포는 GitHub Actions(.github/workflows/deploy-pages.yml)가 site/ 를
+않는다. 배포는 GitHub Actions(.github/workflows/pipeline.yml)가 site/ 를
 GitHub Pages 로 올린다(2026-10-22, Cloudflare Pages 에서 이전).
 
   site/
     index.html              랜딩(띠 + 패널 2개 + 최근 변경)
-    ip_risk.html, ai_coop.html, data.html
+    ip_risk.html, ai_coop.html, review.html, data.html
+    codebook.html           문서/코드북_패널.md + 문서/코드북.md 를 접힌 절로
     r/<stamp>.html          변경 리포트 하나
 
 markdown 변환은 markdown 라이브러리에 맡긴다. 직접 짜지 않는 이유는 리포트
@@ -28,16 +29,16 @@ from datetime import datetime
 from pathlib import Path
 
 import ai_coop_site
-import bloc_site
 import industrial_policy_site
 import ip_risk_site
-import oil_verify_site
-import semiconductor_site
-import solar_site
 
 HERE = Path(__file__).resolve().parent
 LOGS = HERE / "logs"
 SITE = HERE / "site"
+DOCS = HERE / "문서"
+CODEBOOK_PANELS = DOCS / "코드북_패널.md"   # 화면 방법론(패널 1·2) — codebook.html 앞부분
+CODEBOOK_GTA = DOCS / "코드북.md"           # GTA 자료 코드북 — codebook.html 뒷부분
+REPO_URL = "https://github.com/lskyonsei-jpg/skl-economic-security-tracker"
 STATE_PATH = HERE / "cache" / "state.json"
 STATE: dict = json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.is_file() else {}
 
@@ -321,9 +322,9 @@ def to_html(md_text: str) -> str:
 
 def render_report(report: Report) -> str:
     body = to_html(report.text)
-    head = '<a class="back" href="../index.html">← 전체 목록</a>\n<article>\n'
+    head = '<main class="wrap" style="padding-top:32px"><a class="back" href="../index.html">← 전체 목록</a>\n<article>\n'
     return page(f"{report.data_date} 변경 내역 · {SITE_TITLE}",
-                head + body + "\n</article>", depth=1, current="index.html")
+                head + body + "\n</article></main>", depth=1, current="index.html")
 
 
 def render_index(reports: list[Report]) -> str:
@@ -335,22 +336,21 @@ def render_index(reports: list[Report]) -> str:
     meta_html = "".join(f"<div>{html.escape(k)}<b>{html.escape(str(v))}</b></div>" for k, v in meta)
     hero = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Research Dashboard</span>'
             f'<h1>{html.escape(SITE_TITLE)}</h1>'
-            f'<p>Global Trade Alert 의 개입 조치를 매일 받아 BERT 로 산업정책 후보를 가르고, 지정학적 거리와 무역 구조에 얹어 읽는다. '
-            f'두 번째 패널은 한미 AI 협력 사건을 같은 틀로 쌓는다. 모델 라벨은 후보군이며 확정 분류가 아니다.</p>'
+            f'<p>GTA 개입 조치를 매일 수집해 BERT로 산업정책 후보를 가려내고, 지정학적 거리와 교차해 봅니다. 두 번째 패널은 한미 AI 협력 사건을 추적합니다.</p>'
             f'<div class="meta">{meta_html}</div></div></header>')
     pending = ai_coop_site.pending_proposals()
     banner = ""
     if pending:
         by = {k: sum(1 for p in pending if p["task"] == k) for k in "ABC"}
         banner = (f'<section class="section" style="padding:20px 0"><div class="wrap"><a class="panel-card muted" href="review.html" style="min-height:0;padding:18px 24px">'
-                  f'<span class="eyebrow" style="margin-bottom:6px">판단 대기</span><h2 style="font-size:20px;margin:0">연구자 판단을 기다리는 제안 {len(pending)}건 — 새 사건 {by["A"]} · 갱신 {by["B"]} · 재검토 {by["C"]}</h2>'
+                  f'<span class="eyebrow" style="margin-bottom:6px">판단 대기</span><h2 style="margin:0">제안 {len(pending)}건 — 새 사건 {by["A"]} · 갱신 {by["B"]} · 재검토 {by["C"]}</h2>'
                   f'<span class="go">열기 →</span></a></div></section>')
     cards = ('<section class="section"><div class="wrap"><span class="eyebrow">Panels</span><div class="grid grid-2">'
              '<a class="panel-card" href="ip_risk.html"><span class="eyebrow">Panel 1</span><h2>Distortive Industrial Policy Tracker</h2>'
-             '<p>GTA Red·Amber 산업정책 조치의 피영향국 노출을 연도별 BSV 지정학적 거리와 교차한 지도·순위·추이·산점도·블록 구성.</p>'
+             '<p>GTA Red·Amber 산업정책 조치의 피영향국 노출 × BSV 지정학적 거리 — 지도·순위·추이·산점도·블록 구성</p>'
              '<span class="go">열기 →</span></a>'
              '<a class="panel-card" href="ai_coop.html"><span class="eyebrow">Panel 2</span><h2>한미 AI 협력 트래커</h2>'
-             '<p>미국·한국 정부와 민간 주체의 AI 협력 사건을 형태(MOU·선언·집행·확정계약)와 분야별로 타임라인·매트릭스로 본다. 코딩은 연구자가 확정한다.</p>'
+             '<p>한미 정부·민간의 AI 협력 사건을 형태·분야별 타임라인과 매트릭스로</p>'
              '<span class="go">열기 →</span></a></div></div></section>')
     items = []
     for report in reports[:10]:
@@ -363,20 +363,88 @@ def render_index(reports: list[Report]) -> str:
     return page(SITE_TITLE, hero + banner + cards + changes, current="index.html")
 
 
+# 파이프라인이 실제로 호출하는 외부 API. 코드의 상수와 같이 바뀌어야 한다.
+#   (이름, 끝점, 용도, 주기, 키, 코드 위치)
+APIS = [
+    ("Global Trade Alert API v2", "api.globaltradealert.org/api/v2/gta/data/", "개입 조치 전량 수집 (패널 1)", "매일", "GTA_API_KEY", "auto_update.py"),
+    ("Hugging Face Hub", "industrialpolicygroup/industrialpolicy-classifier", "BERT 산업정책 분류 모델 (revision 고정)", "매일 (새 건만 분류)", "없음", "auto_update.py"),
+    ("Harvard Dataverse", "dataverse.harvard.edu · doi:10.7910/DVN/LEJUQZ", "BSV UN 표결 ideal point (파일 ID 고정)", "매월 4일", "없음", "collect_reference.py"),
+    ("IMF Data SDMX 2.1", "api.imf.org/external/sdmx/2.1 · IMF.STA,IMTS", "DOTS 양자 상품무역 (미·중 기준)", "매월 4일", "없음", "collect_reference.py"),
+    ("World Bank API v2", "api.worldbank.org/v2 · NY.GDP.MKTP.CD", "WDI 경상 GDP", "매월 4일", "없음", "collect_reference.py"),
+    ("Anthropic API", "claude-opus-5-5 (effort medium)", "AI 협력 사건 탐지·코딩·재검토 제안 (패널 2)", "매일", "ANTHROPIC_API_KEY", "collect_ai_coop.py · ai_coop_tasks.py"),
+    ("Google News RSS · Bing News", "news.google.com/rss/search · bing.com/news/search", "AI 협력 기사 탐지", "매일", "없음", "ai_coop_tasks.py"),
+    ("Internet Archive Wayback", "archive.org/wayback/available", "유료벽 기사 본문 대체 수집", "필요 시", "없음", "collect_ai_coop.py"),
+    ("GitHub REST API", "api.github.com/repos/…/issues", "판단 대기 페이지에서 제출한 결정 회수", "매일", "GITHUB_TOKEN (Actions 기본)", "ai_coop_tasks.py"),
+    ("GitHub Release “state”", "gh release download/upload", "master.parquet·예측 캐시·기준자료·사건 파일 보관", "매 실행", "GITHUB_TOKEN (Actions 기본)", "pipeline.yml"),
+]
+
+
 def render_data(reports: list[Report]) -> str:
-    repo = "https://github.com/lskyonsei-jpg/skl-economic-security-tracker"
+    repo = REPO_URL
     files = [("ip_risk.json", "패널 1 — 국가·연도별 리스크·노출·거리"), ("ip_sectors.json", "패널 1 — 조치 단위 원자료(산점도·회귀)"),
              ("ai_coop.json", "패널 2 — 사건 목록과 집계"), ("world.geojson", "지도 (Natural Earth 1:110m)")]
     rows = "".join(f'<tr><td><a href="{f}" download>{f}</a></td><td>{html.escape(d)}</td></tr>' for f, d in files)
+    api_rows = "".join(
+        f'<tr><td>{html.escape(n)}<span class="small">{html.escape(ep)}</span><span class="small">{html.escape(where)}</span></td>'
+        f'<td>{html.escape(use)}</td><td>{html.escape(when)}</td><td>{html.escape(key)}</td></tr>'
+        for n, ep, use, when, key, where in APIS)
     body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Data</span><h1>자료와 코드</h1>'
-            f'<p>화면이 읽는 JSON 을 그대로 내려받을 수 있다. 전체 GTA 스냅숏(master.parquet)과 BERT 예측 캐시는 저장소 Release 에 있다.</p></div></header>'
+            f'<p>화면이 쓰는 JSON, 저장소, 연결된 API 목록. 열 정의와 산식은 <a href="codebook.html">코드북</a>에 있습니다.</p></div></header>'
             f'<section class="section"><div class="wrap grid grid-2"><div class="panel"><div class="panel-head">사이트 JSON</div>'
             f'<div class="panel-body"><table><tbody>{rows}</tbody></table></div></div>'
-            f'<div class="panel"><div class="panel-head">저장소</div><div class="panel-body"><p><a href="{repo}">{repo}</a></p>'
-            f'<p><a href="{repo}/releases/tag/state">Release “state”</a> — master.parquet(전량 + BERT 라벨), prediction_cache.json, state.json, 변경 리포트</p>'
+            f'<div class="panel"><div class="panel-head">저장소</div><div class="panel-body"><p><a href="{repo}">github.com/lskyonsei-jpg/skl-economic-security-tracker</a></p>'
+            f'<p><a href="{repo}/releases/tag/state">Release “state”</a> — master.parquet(GTA 전량 + BERT 라벨), prediction_cache.json, state.json, 변경 리포트, 기준자료, AI 협력 사건 파일</p>'
             f'<p><a href="{repo}/actions">Actions</a> — 매일 06:00 KST 갱신·배포 기록</p>'
-            f'<p class="note">D_IP_bert_3 == 1 은 산업정책 후보군이다. 확정 라벨이 아니다. GTA Red/Amber 는 외국 상업이익에 해로운 조치, Green 은 비차별적 자유화다.</p></div></div></div></section>')
+            f'<p><a href="codebook.html" class="btn">Codebook</a></p></div></div></div></section>'
+            f'<section class="section"><div class="wrap"><span class="eyebrow">APIs</span><div class="panel"><div class="panel-head">연결된 API</div>'
+            f'<div class="tablebox" style="border:0;margin:0"><table class="api-table"><thead><tr><th style="width:42%">API · 코드</th><th>용도</th><th style="width:11%">주기</th><th style="width:17%">키</th></tr></thead><tbody>{api_rows}</tbody></table></div>'
+            f'<div class="panel-body"><p class="note">키는 GitHub Secrets에만 있습니다. 코드에 담지 않습니다.</p></div></div></div></section>')
     return page(f"자료 · {SITE_TITLE}", body, current="data.html")
+
+
+H2_SECTION_RE = re.compile(r"<h2>(.*?)</h2>(.*?)(?=<h2>|\Z)", re.DOTALL)
+H2_ID_RE = re.compile(r"^\{#([\w-]+)\}\s*")
+
+
+def collapse_h2(html_text: str) -> str:
+    """h2 절을 전부 <details> 로 접는다(코드북 전용). 제목 앞 `{#id}` 는 앵커 id 가 된다."""
+    def one(match: re.Match) -> str:
+        title, body = match.group(1), match.group(2)
+        anchor = ""
+        m = H2_ID_RE.match(title)
+        if m:
+            anchor, title = f' id="{m.group(1)}"', title[m.end():]
+        return (f'<details class="sec lv2"{anchor}><summary>{title}</summary>'
+                f'<div class="secbody">{body}</div></details>')
+    return H2_SECTION_RE.sub(one, html_text)
+
+
+def md_to_html_plain(md_text: str) -> str:
+    import markdown as md
+    return wrap_tables(md.markdown(md_text, extensions=["tables", "sane_lists"]))
+
+
+def render_codebook() -> str:
+    """codebook.html — 패널 방법론(문서/코드북_패널.md) + GTA 자료 코드북(문서/코드북.md)."""
+    parts = []
+    panels = CODEBOOK_PANELS.read_text(encoding="utf-8") if CODEBOOK_PANELS.is_file() else ""
+    gta = CODEBOOK_GTA.read_text(encoding="utf-8") if CODEBOOK_GTA.is_file() else ""
+    # GTA 코드북의 h1 은 페이지 제목과 겹친다. h2 로 한 단계 내리고 앵커를 단다.
+    panels = re.sub(r"^# .*$", "", panels, count=1, flags=re.M)
+    gta = re.sub(r"^# .*$", "", gta, count=1, flags=re.M)
+    gta = re.sub(r"^### ", "#### ", gta, flags=re.M)
+    gta = re.sub(r"^## ", "### ", gta, flags=re.M)
+    gta = "## {#gta} GTA 자료 코드북 (master.parquet 열 정의)\n\n" + gta.strip()
+    for text in (panels, gta):
+        if text.strip():
+            parts.append(collapse_h2(md_to_html_plain(text)))
+    toc = [("panel1", "패널 1 리스크 지수"), ("scatter", "패널 1 산점도·회귀"), ("composition", "패널 1 블록 구성"),
+           ("findings", "패널 1 확인된 사항"), ("panel2", "패널 2 코딩 규칙"), ("gta", "GTA 자료 코드북")]
+    toc_html = "".join(f'<li><a href="#{a}" onclick="document.getElementById(\'{a}\').open=true">{html.escape(t)}</a></li>' for a, t in toc)
+    body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Codebook</span><h1>코드북</h1>'
+            f'<p>화면의 산식·분류 기준과 GTA 자료의 열 정의. 원문은 저장소 <a href="{REPO_URL}/tree/main/문서">문서/</a>의 코드북_패널.md, 코드북.md.</p></div></header>'
+            f'<section class="section"><div class="wrap"><div class="codebook"><ul class="toc">{toc_html}</ul>{"".join(parts)}</div></div></section>')
+    return page(f"코드북 · {SITE_TITLE}", body, current="codebook.html")
 
 
 def collect(logs: Path) -> list[Report]:
@@ -413,10 +481,7 @@ def _force_remove(func, path, error):
 
 
 def build(logs: Path = LOGS, out: Path = SITE, quiet: bool = False) -> Path:
-    """site/ 를 통째로 다시 만든다. 반환값은 site 경로.
-
-    2026-10-22: 패널 2개 체제. 반도체·석유·태양광·석유검증 화면은 SITE_EXTRA_PANELS=1 일 때만 만든다
-    (코드는 남겨 두었고 index 에서 내렸다)."""
+    """site/ 를 통째로 다시 만든다. 반환값은 site 경로. 2026-10-22: 패널 2개 체제."""
     reports = collect(logs)
     if out.exists():
         shutil.rmtree(out, onexc=_force_remove)
@@ -427,23 +492,17 @@ def build(logs: Path = LOGS, out: Path = SITE, quiet: bool = False) -> Path:
 
     (out / "index.html").write_text(render_index(reports), encoding="utf-8")
     (out / "data.html").write_text(render_data(reports), encoding="utf-8")
+    (out / "codebook.html").write_text(render_codebook(), encoding="utf-8")
     for report in reports:
         (out / "r" / f"{report.slug}.html").write_text(render_report(report), encoding="utf-8")
 
     industrial_policy_site.build(out)      # ip_us_cn.json — 패널 1 의 입력
     risk_built = ip_risk_site.build(out)
     ai_built = ai_coop_site.build(out)
-    extra = ""
-    if os.environ.get("SITE_EXTRA_PANELS") == "1":
-        semi = semiconductor_site.build(out)
-        bloc = bloc_site.build(out)
-        solar = solar_site.build(out)
-        verify = oil_verify_site.build(out)
-        extra = f", 추가 패널(반도체 {semi}, 석유 {bloc}, 태양광 {solar}, 검증 {verify})"
 
     if not quiet:
         size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
-        print(f"    사이트 생성   리포트 {len(reports)}건, 패널1 {risk_built}, 패널2 {ai_built}{extra}, {size / 1024:,.0f}KB")
+        print(f"    사이트 생성   리포트 {len(reports)}건, 패널1 {risk_built}, 패널2 {ai_built}, {size / 1024:,.0f}KB")
     return out
 
 

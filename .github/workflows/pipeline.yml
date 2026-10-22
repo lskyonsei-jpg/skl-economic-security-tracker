@@ -1,14 +1,14 @@
 # 전체 파이프라인 — 사람이 아무것도 실행하지 않는다.
 #
-#   Release "state" 내려받기 -> GTA 갱신(auto_update.py) -> (월 1회) Comtrade·기준자료 수집
+#   Release "state" 내려받기 -> GTA 갱신(auto_update.py) -> (월 1회) 기준자료 수집
 #   -> 한미 AI 협력: 결정 CSV 반영 + 일일 판단 요청(A 새 사건·B 갱신·C 재검토 → 사이트 review.html) -> Release "state" 올리기 -> 빌드 -> 배포
 #
 # 일정(UTC 21:00 = 한국 06:00)
-#   매일: incremental.  일요일: full(전량 재대조).  매월 4일: Comtrade 와 기준자료(BSV·IMF DOTS·WDI)도 수집.
+#   매일: incremental.  일요일: full(전량 재대조).  매월 4일: 기준자료(BSV·IMF DOTS·WDI)도 수집.
 # 비밀값(Settings > Secrets and variables > Actions)
-#   GTA_API_KEY(필수), COMTRADE_API_KEY(없으면 수집 건너뜀), ANTHROPIC_API_KEY(한미 AI 협력 코딩)
+#   GTA_API_KEY(필수), ANTHROPIC_API_KEY(한미 AI 협력 코딩)
 # 멈춤 조건은 auto_update.py 의 guard() 가 판정한다. 걸리면 Release 를 건드리지 않고 실패한다.
-# 코드만 바뀐 push 는 자료 갱신 없이 빌드·배포만 한다.
+# 코드만 바뀐 push 는 자료 갱신 없이 빌드·배포만 한다. 문서/ 는 코드북 2종만 빌드를 일으킨다(사이트가 읽는다).
 name: pipeline
 
 on:
@@ -16,7 +16,7 @@ on:
     - cron: "0 21 * * *"
   push:
     branches: [main]
-    paths-ignore: ["문서/**", "README.md", "CLAUDE.md"]
+    paths: ["**", "!문서/**", "문서/코드북*.md", "!README.md", "!CLAUDE.md"]
   workflow_dispatch:
     inputs:
       mode:
@@ -24,10 +24,6 @@ on:
         type: choice
         options: [incremental, full, skip]
         default: incremental
-      comtrade:
-        description: "Comtrade 수집 실행"
-        type: boolean
-        default: false
       reference:
         description: "기준자료(BSV·IMF DOTS·WDI) 수집 실행"
         type: boolean
@@ -70,16 +66,15 @@ jobs:
           case "${{ github.event_name }}" in
             schedule)
               if [ "$DOW" = "7" ]; then MODE=full; else MODE=incremental; fi
-              if [ "$DOM" = "04" ]; then COMTRADE=true; REFERENCE=true; else COMTRADE=false; REFERENCE=false; fi ;;
+              if [ "$DOM" = "04" ]; then REFERENCE=true; else REFERENCE=false; fi ;;
             workflow_dispatch)
-              MODE="${{ github.event.inputs.mode }}"; COMTRADE="${{ github.event.inputs.comtrade }}"; REFERENCE="${{ github.event.inputs.reference }}" ;;
+              MODE="${{ github.event.inputs.mode }}"; REFERENCE="${{ github.event.inputs.reference }}" ;;
             *)
-              MODE=skip; COMTRADE=false; REFERENCE=false ;;
+              MODE=skip; REFERENCE=false ;;
           esac
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
-          echo "comtrade=$COMTRADE" >> "$GITHUB_OUTPUT"
           echo "reference=$REFERENCE" >> "$GITHUB_OUTPUT"
-          echo "GTA 모드: $MODE / Comtrade: $COMTRADE / 기준자료: $REFERENCE"
+          echo "GTA 모드: $MODE / 기준자료: $REFERENCE"
 
       - uses: actions/setup-python@v5
         with:
@@ -112,9 +107,7 @@ jobs:
           gh release download state -R "$GITHUB_REPOSITORY" -D _state
           for f in master.parquet prediction_cache.json state.json; do [ -f "_state/$f" ] && mv "_state/$f" cache/; done
           [ -f _state/logs.tar.gz ] && tar -xzf _state/logs.tar.gz -C logs
-          for a in comtrade gta_threads reference; do
-            if [ -f "_state/$a.tar.gz" ]; then mkdir -p "data/$a" && tar -xzf "_state/$a.tar.gz" -C "data/$a"; fi
-          done
+          if [ -f _state/reference.tar.gz ]; then mkdir -p data/reference && tar -xzf _state/reference.tar.gz -C data/reference; fi
           for f in ai_coop_events.json ai_coop_state.json; do [ -f "_state/$f" ] && cp "_state/$f" "data/$f"; done
           ls -la cache data; echo "리포트 $(ls logs | wc -l)개"
 
@@ -131,15 +124,6 @@ jobs:
           if [ "$RC" = "3" ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; echo "변경 없음";
           elif [ "$RC" = "0" ]; then echo "changed=true" >> "$GITHUB_OUTPUT";
           else echo "auto_update.py 종료코드 $RC"; exit $RC; fi
-
-      - name: Comtrade 수집
-        id: comtrade
-        if: steps.plan.outputs.comtrade == 'true'
-        env:
-          COMTRADE_API_KEY: ${{ secrets.COMTRADE_API_KEY }}
-        run: |
-          if [ -z "$COMTRADE_API_KEY" ]; then echo "COMTRADE_API_KEY 없음 — 건너뜀"; exit 0; fi
-          python collect_comtrade.py && echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: 기준자료 수집 (BSV·IMF DOTS·WDI)
         id: reference
@@ -176,7 +160,7 @@ jobs:
           retention-days: 30
 
       - name: Release "state" 올리기
-        if: steps.gta.outputs.changed == 'true' || steps.comtrade.outputs.changed == 'true' || steps.reference.outputs.changed == 'true' || steps.ai_daily.outputs.changed == 'true'
+        if: steps.gta.outputs.changed == 'true' || steps.reference.outputs.changed == 'true' || steps.ai_daily.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -184,9 +168,6 @@ jobs:
           if [ "${{ steps.gta.outputs.changed }}" = "true" ]; then
             tar -czf logs.tar.gz -C logs .
             UP="$UP cache/master.parquet cache/prediction_cache.json cache/state.json logs.tar.gz"
-          fi
-          if [ "${{ steps.comtrade.outputs.changed }}" = "true" ]; then
-            tar -czf comtrade.tar.gz -C data/comtrade . && UP="$UP comtrade.tar.gz"
           fi
           if [ "${{ steps.reference.outputs.changed }}" = "true" ]; then
             tar -czf reference.tar.gz -C data/reference . && UP="$UP reference.tar.gz"
@@ -208,7 +189,7 @@ jobs:
             echo "## pipeline"
             echo
             echo "- GTA 모드: ${{ steps.plan.outputs.mode }} / 변경: ${{ steps.gta.outputs.changed || 'n/a' }}"
-            echo "- Comtrade: ${{ steps.comtrade.outputs.changed || '건너뜀' }} / 기준자료: ${{ steps.reference.outputs.changed || '건너뜀' }} / AI 협력: ${{ github.event.inputs.ai_coop || 'none' }}"
+            echo "- 기준자료: ${{ steps.reference.outputs.changed || '건너뜀' }} / AI 협력: ${{ github.event.inputs.ai_coop || 'none' }}"
             echo "- state.json: $(tr -d '\n' < cache/state.json | cut -c1-200)"
             echo "- site: $(find site -type f | wc -l)개 파일, $(du -sh site | cut -f1)"
             R=$(ls logs/change_report_*.md 2>/dev/null | tail -1)
