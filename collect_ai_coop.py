@@ -5,7 +5,9 @@
                                                        표본 사건의 원문을 다시 받아 Task A 로 코딩하고 연구자 코딩과 대조
   (예정) discover / run                                 신규 기사 탐지 -> Task A/B -> 병합 -> 게시
 
-모델: claude-opus-5-5 (연구자 확정 2026-10-22). 구조화 출력(output_config.format)으로 스키마를 강제한다.
+모델: claude-opus-5-5, effort high (연구자 확정 2026-10-22). 구조화 출력(output_config.format)으로 스키마를 강제한다.
+프롬프트 v2(2026-10-22): form 은 문서의 법적 성격 기준, track 은 정부-정부/정부-민간/민간-민간, 금액은 거래금액만,
+기사 하나에 사건 여러 개(events 배열), 기관 표기는 reference/ai_coop_orgs.csv 의 표준 표기.
 키:   환경변수 ANTHROPIC_API_KEY (GitHub Secrets). 로컬에는 없으므로 recode 는 CI 에서 돈다.
 비용 안전장치: 한 번 실행에 MAX_CALLS 회 이상 호출하지 않는다.
 
@@ -33,7 +35,8 @@ MODEL = "claude-opus-5-5"
 MAX_CALLS = int(os.environ.get("AI_COOP_MAX_CALLS", "120"))
 
 FORMS = ["MOU·의향", "선언", "집행", "확정계약"]
-TRACKS = ["정부", "민간", "정부-민간"]
+TRACKS = ["정부-정부", "정부-민간", "민간-민간"]
+ORGS = HERE / "reference" / "ai_coop_orgs.csv"
 SECTORS = ["AI데이터센터", "피지컬AI·로봇", "통상·규제", "파운드리", "반도체·메모리", "AI모델·SW", "안보·국방", "전력·인프라", "인재"]
 ADMINISTRATIONS = [("2025-01-20", "트럼프 2기"), ("2021-01-20", "바이든"), ("2017-01-20", "트럼프 1기"), ("2009-01-20", "오바마")]
 # 시스템 프롬프트 예시로 쓰는 표본 사건(연구자 확정). 정확도 측정에서는 제외한다.
@@ -51,6 +54,10 @@ EXAMPLE_TITLES = [
 ]
 
 
+def norm(s: str) -> str:
+    return re.sub(r"[\s·\-–()（）]", "", s).lower()
+
+
 def administration(date: str) -> str:
     for start, name in ADMINISTRATIONS:
         if date >= start:
@@ -62,6 +69,70 @@ def split_parties(v) -> list[str]:
     if v is None or (isinstance(v, float)) or str(v).strip() in ("", "nan"):
         return []
     return [p.strip() for p in str(v).split(",") if p.strip()]
+
+
+def load_orgs() -> dict:
+    """reference/ai_coop_orgs.csv -> {alias_norm: {canonical, country, type}}."""
+    table = {}
+    with ORGS.open(encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            entry = {"canonical": r["canonical"], "country": r["country"], "type": r["type"]}
+            for name in [r["canonical"]] + [a for a in r["aliases"].split("|") if a]:
+                table[norm(name)] = entry
+    return table
+
+
+_ORGS: dict | None = None
+
+
+def org_lookup(name: str) -> dict | None:
+    global _ORGS
+    if _ORGS is None:
+        _ORGS = load_orgs()
+    return _ORGS.get(norm(name))
+
+
+def canonical_parties(names: list[str]) -> tuple[list[str], list[str]]:
+    """표기 정규화. (정규화된 목록, 마스터에 없는 이름 목록)"""
+    out, unknown = [], []
+    for n in names:
+        hit = org_lookup(n)
+        if hit:
+            if hit["canonical"] not in out:
+                out.append(hit["canonical"])
+        else:
+            unknown.append(n)
+            if n not in out:
+                out.append(n)
+    return out, unknown
+
+
+def side_type(names: list[str]) -> str | None:
+    """한쪽 주체 묶음의 성격: 정부 / 민간 / 혼합 / None(미상)."""
+    kinds = set()
+    for n in names:
+        hit = org_lookup(n)
+        kinds.add(hit["type"] if hit else ("정부" if re.search(r"정부|부처|청와대|백악관|상무부|국무부|대통령|육군|해군|공군|국방|NSF|Commerce|Department", n) else "민간"))
+    if not kinds:
+        return None
+    if kinds == {"정부"}:
+        return "정부"
+    if kinds == {"민간"}:
+        return "민간"
+    return "혼합"
+
+
+def derive_track(us: list[str], kr: list[str]) -> str | None:
+    """연구자 결정 2026-10-22: 정부-정부 / 정부-민간 / 민간-민간. 양쪽이 모두 정부면 정부-정부,
+    모두 민간이면 민간-민간, 그 외(한쪽만 정부이거나 한쪽에 정부·민간이 섞임)는 정부-민간."""
+    a, b = side_type(us), side_type(kr)
+    if a is None or b is None:
+        return None
+    if a == b == "정부":
+        return "정부-정부"
+    if a == b == "민간":
+        return "민간-민간"
+    return "정부-민간"
 
 
 # ------------------------------------------------------------------ seed
@@ -82,7 +153,8 @@ def seed_to_events(rows: list[dict]) -> list[dict]:
         events.append({
             "id": r["id"], "date": r["일자"],
             "us_parties": split_parties(r["미국 주체"]), "kr_parties": split_parties(r["한국 주체"]),
-            "track": r["트랙"].strip(), "form": r["형태"].strip(), "sectors": split_parties(r["분야"]),
+            "track": derive_track(split_parties(r["미국 주체"]), split_parties(r["한국 주체"])) or "정부-민간",
+            "track_original": r["트랙"].strip(), "form": r["형태"].strip(), "sectors": split_parties(r["분야"]),
             "title": r["내용"].strip(), "summary": "", "note": r.get("비고", "").strip(),
             "amount_usd_bn": float(amount) if amount else None, "amount_is_estimate": False,
             "sources": [{"url": r["원문 링크"].strip(), "grade": None}] if r.get("원문 링크", "").strip() else [],
@@ -108,34 +180,41 @@ def cmd_seed() -> int:
 # ------------------------------------------------------------------ Task A 프롬프트
 
 
-SYSTEM_RULES = """당신은 한미 AI 협력 사건 데이터베이스의 코딩 보조자다. 기사 한 건을 읽고 스키마에 맞는 사건 하나를 추출한다. 기사에 없는 사실을 만들지 않는다.
+SYSTEM_RULES = """당신은 한미 AI 협력 사건 데이터베이스의 코딩 보조자다. 기사 한 건을 읽고 스키마에 맞는 사건을 추출한다. 기사에 없는 사실을 만들지 않는다.
 
 [사건의 정의]
-미국 측 주체와 한국 측 주체가 모두 명시된, AI·반도체·데이터센터·로봇·AI 규제 관련 협력 또는 거래. 한쪽만 있으면 is_event=false. 미국 국내법·정책이 한국 기업에 영향을 주는 것(예: CHIPS Act)은 양측 주체가 있어도 track=정부, form=선언, sectors 에 통상·규제를 넣는다.
+미국 측 주체와 한국 측 주체가 모두 명시된, AI·반도체·데이터센터·로봇·자율주행·전장(차량 AI)·AI 규제 관련 협력 또는 거래. 한쪽만 있으면 사건이 아니다(events 를 빈 배열로). 미국 국내법·정책이 한국 기업에 영향을 주는 것(예: CHIPS Act)은 양측 주체가 있어도 form=선언, sectors 에 통상·규제를 넣는다.
 
-[form 판정 — 기사 문면의 구속력 기준]
-- 확정계약: 계약 체결·지분 취득·인수 완료·공급계약 서명이 명시. 금액이나 지분율이 있으면 강한 근거.
-- 집행: 이미 체결된 계약·협약의 이행 사실(양산 개시, 제품 출시, 인수 완료 후 통합, 공급 진행). 선행 사건이 있으면 prior_event_hint 에 적는다.
-- MOU·의향: 파트너십·협력 발표이나 계약 조건이 비공개이거나 "본계약은 별도 체결" 문구가 있는 것. LOI, 양해각서, 투자 의향.
-- 선언: 정부 공동성명·팩트시트·회담·정상회의·협의체 출범·투자 발표(기업이 금액만 밝히고 계약 상대가 없는 투자 계획 포함).
-판정이 두 범주 사이면 더 약한 쪽(선언 < MOU·의향 < 집행 < 확정계약)을 고르고 confidence 를 낮춘다.
+[기사 하나에 사건 여러 개]
+정상회담·서밋·패키지 발표처럼 한 기사가 여러 거래를 묶어 보도하면, 거래마다 사건 하나씩 events 배열에 넣는다(예: 정부 공동선언 1건 + 삼성–브로드컴 MOU 1건 + SK–엔비디아 협력 1건). 각 사건의 parties 에는 그 거래의 당사자만 넣고 기사에 등장한 다른 기관을 섞지 않는다. 묶음 전체를 하나의 우산 사건으로 만들지 않는다.
 
-[track] 정부 / 민간 / 정부-민간. 정부 기관이 당사자로 서명·발표하면 정부. 정부와 기업이 함께 당사자면 정부-민간.
+[form 판정 — 문서의 법적 성격 기준 (연구자 결정 2026-10-22)]
+- 확정계약: 구속력 있는 문서가 명시된 것. 계약 체결, 인수 계약, 지분 취득·투자 집행, 합작법인 설립, 장기 공급계약, 라이선스 계약, 본계약 서명, 파트너십 "협약(agreement) 체결". 금액이 없어도 인정한다.
+- MOU·의향: 비구속 문서(MOU·LOI·업무협약·양해각서·기본합의)이거나, "파트너십 발표·협력하기로·선정" 처럼 문서 종류가 특정되지 않은 협력 발표.
+- 집행: 앞선 구속력 거래의 이행·완료. 인수 완료, 지분 취득 완료, 양산 개시, 제품 출시, 공급 개시, 설비 착공. 기사가 그 거래의 첫 보도라도 "완료"면 집행이다. prior_event_hint 에 선행 거래를 적는다.
+- 선언: 정부 공동성명·팩트시트·회담·정상회의·협의체 출범, 기업의 투자 계획 발표(계약 상대가 없는 것).
+문면으로 가릴 수 없으면 더 약한 쪽(선언 < MOU·의향 < 집행 < 확정계약)을 고르고 confidence 를 낮춘다.
+
+[track — 양측 당사자의 성격 (연구자 결정 2026-10-22)]
+정부-정부(양쪽 모두 정부·공공기관) / 민간-민간(양쪽 모두 기업·민간) / 정부-민간(한쪽만 정부이거나 한쪽에 정부와 기업이 함께). 당사자만 보고 판정하며, 행사 주최·참석은 당사자가 아니다.
+
 [sectors] AI데이터센터, 피지컬AI·로봇, 통상·규제, 파운드리, 반도체·메모리, AI모델·SW, 안보·국방, 전력·인프라, 인재. 복수 가능. 기사에 근거가 있는 것만.
-[parties] 기관명은 기사 표기 그대로. 정부는 "정부(미국)", "정부(한국)" 또는 부처명(과기정통부, 백악관 등). 그룹 계열사는 기사에 나온 법인만. 한국 측 주체가 미국 법인의 자회사인 경우도 한국 측으로 둔다.
-[amount_usd_bn] 억 달러 단위 숫자. 기사에 달러 금액이 명시된 경우만. 원화만 있으면 amount_krw_bn 에 억 원으로 적고 달러 환산은 하지 않는다. "수십억", "최대" 같은 범위면 null 로 두고 note 에 적는다.
+[parties] 아래 [기관 표기] 목록의 표준 표기를 쓴다. 목록에 없으면 기사 표기 그대로. 정부는 "정부(미국)", "정부(한국)" 또는 부처명. 그룹은 기사에 나온 법인만(현대차그룹이면 명시된 계열사; 없으면 현대차).
+[amount_usd_bn] 거래금액만, 억 달러 숫자. 기업가치·시가총액·패키지 총액·투자 계획 총액은 금액이 아니라 note 에 적는다(연구자 결정 2026-10-22). 원화만 있으면 amount_krw_bn 에 억 원. 범위("수십억", "최대")면 null 로 두고 note 에 적는다.
 [date] 발표일(YYYY-MM-DD). 기사 게재일과 다르면 발표일.
 [title] 20자 안팎, "주체–주체, 내용(금액)" 형식. [summary] 2~3문장, 기사 사실만.
 [confidence] 0~1. form 판정과 주체 식별이 모두 분명하면 0.9 이상, 어느 하나가 기사 문면으로 확정되지 않으면 0.6 이하.
 [source_grade] 기사가 정부·기업의 1차 발표(보도자료·공시·공식 뉴스룸)면 1, 언론 보도면 2.
 
+[기관 표기]
+{orgs}
+
 [예시] 아래는 연구자가 확정한 코딩이다. 같은 기준을 적용한다. 각 예시의 '기사 요지'는 연구자 메모이며, 실제 입력은 기사 본문이다.
 """
 
-OUTPUT_SCHEMA = {
+EVENT_SCHEMA = {
     "type": "object",
     "properties": {
-        "is_event": {"type": "boolean"},
         "date": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "YYYY-MM-DD"},
         "us_parties": {"type": "array", "items": {"type": "string"}},
         "kr_parties": {"type": "array", "items": {"type": "string"}},
@@ -152,16 +231,30 @@ OUTPUT_SCHEMA = {
         "confidence": {"type": "number"},
         "note": {"type": "string"},
     },
-    "required": ["is_event", "date", "us_parties", "kr_parties", "track", "form", "sectors", "title", "summary",
+    "required": ["date", "us_parties", "kr_parties", "track", "form", "sectors", "title", "summary",
                  "amount_usd_bn", "amount_is_estimate", "amount_krw_bn", "source_grade", "prior_event_hint",
                  "confidence", "note"],
+    "additionalProperties": False,
+}
+
+OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "events": {"type": "array", "items": EVENT_SCHEMA},
+        "article_note": {"type": "string", "description": "사건이 없거나 범위 밖이면 이유"},
+    },
+    "required": ["events", "article_note"],
     "additionalProperties": False,
 }
 
 
 def build_system(events: list[dict]) -> str:
     by_title = {e["title"]: e for e in events}
-    parts = [SYSTEM_RULES]
+    org_lines = []
+    with ORGS.open(encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            org_lines.append(f"- {r['canonical']} ({r['country']}, {r['type']}): {r['aliases'].replace('|', ', ')}")
+    parts = [SYSTEM_RULES.replace("{orgs}", "\n".join(org_lines))]
     for i, title in enumerate(EXAMPLE_TITLES, 1):
         e = by_title.get(title)
         if not e:
@@ -191,7 +284,7 @@ def code_article(client, system: str, meta: dict, body: str, effort: str, kind: 
              "cache_read": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
              "cache_write": getattr(response.usage, "cache_creation_input_tokens", 0) or 0}
     if response.stop_reason == "refusal":
-        return {"is_event": False, "note": "refusal", "refusal": True}, usage
+        return {"events": [], "article_note": "refusal", "refusal": True}, usage
     text = next(b.text for b in response.content if b.type == "text")
     return json.loads(text), usage
 
@@ -368,10 +461,6 @@ def clip(body: str, head: int = 6000, tail: int = 2000) -> str:
 # ------------------------------------------------------------------ recode
 
 
-def norm(s: str) -> str:
-    return re.sub(r"[\s·\-–()（）]", "", s).lower()
-
-
 def jaccard(a: list[str], b: list[str]) -> float:
     A, B = {norm(x) for x in a}, {norm(x) for x in b}
     return len(A & B) / len(A | B) if A | B else 1.0
@@ -415,22 +504,31 @@ def cmd_recode(effort: str, limit: int | None) -> int:
         calls += 1
         for k in usage_total:
             usage_total[k] += usage[k]
-        if inp["kind"] == "title" and isinstance(pred.get("confidence"), (int, float)):
-            pred["confidence"] = min(pred["confidence"], 0.5)
-        rec["fetch"] = inp["kind"]; rec["pred"] = pred
+        events_pred = pred.get("events") or []
+        for ev in events_pred:
+            ev["us_parties"], _ = canonical_parties(ev.get("us_parties", []))
+            ev["kr_parties"], _ = canonical_parties(ev.get("kr_parties", []))
+            if inp["kind"] == "title" and isinstance(ev.get("confidence"), (int, float)):
+                ev["confidence"] = min(ev["confidence"], 0.5)
+        truth_us, _ = canonical_parties(e["us_parties"]); truth_kr, _ = canonical_parties(e["kr_parties"])
+        def closeness(ev):
+            return jaccard(ev.get("us_parties", []), truth_us) + jaccard(ev.get("kr_parties", []), truth_kr) + (0.5 if ev.get("form") == e["form"] else 0)
+        best = max(events_pred, key=closeness) if events_pred else {}
+        rec["fetch"] = inp["kind"]; rec["pred"] = best; rec["pred_all"] = events_pred; rec["n_events"] = len(events_pred)
+        rec["article_note"] = pred.get("article_note", "")
         rec["match"] = {
-            "is_event": bool(pred.get("is_event")),
-            "form": pred.get("form") == e["form"], "track": pred.get("track") == e["track"],
-            "sectors_jaccard": round(jaccard(pred.get("sectors", []), e["sectors"]), 2),
-            "us_jaccard": round(jaccard(pred.get("us_parties", []), e["us_parties"]), 2),
-            "kr_jaccard": round(jaccard(pred.get("kr_parties", []), e["kr_parties"]), 2),
-            "amount": (pred.get("amount_usd_bn") == e["amount_usd_bn"]),
-            "date": pred.get("date") == e["date"],
+            "is_event": bool(events_pred),
+            "form": best.get("form") == e["form"], "track": best.get("track") == e["track"],
+            "sectors_jaccard": round(jaccard(best.get("sectors", []), e["sectors"]), 2),
+            "us_jaccard": round(jaccard(best.get("us_parties", []), truth_us), 2),
+            "kr_jaccard": round(jaccard(best.get("kr_parties", []), truth_kr), 2),
+            "amount": (best.get("amount_usd_bn") == e["amount_usd_bn"]),
+            "date": best.get("date") == e["date"],
         }
         results.append(rec)
         m = rec["match"]
-        print(f"  {e['date']} {e['title'][:30]:<30} [{inp['kind']:<5} {inp['via'][:14]:<14}] form {'O' if m['form'] else 'X'}({pred.get('form')}) "
-              f"track {'O' if m['track'] else 'X'} sec {m['sectors_jaccard']} us {m['us_jaccard']} kr {m['kr_jaccard']} amt {'O' if m['amount'] else 'X'} conf {pred.get('confidence')}")
+        print(f"  {e['date']} {e['title'][:30]:<30} [{inp['kind']:<5} {inp['via'][:14]:<14}] n={len(events_pred)} form {'O' if m['form'] else 'X'}({best.get('form')}) "
+              f"track {'O' if m['track'] else 'X'} sec {m['sectors_jaccard']} us {m['us_jaccard']} kr {m['kr_jaccard']} amt {'O' if m['amount'] else 'X'} conf {best.get('confidence')}")
         time.sleep(0.5)
     inputs_fh.close()
 
@@ -446,6 +544,8 @@ def cmd_recode(effort: str, limit: int | None) -> int:
                           + usage_total["cache_read"] * 0.2 / 1e6 + usage_total["cache_write"] * 5 / 1e6, 3),
         "seconds": round(time.monotonic() - started),
         "heldout_n": len(held),
+        "events_per_article": round(sum(r.get("n_events", 0) for r in coded) / len(coded), 2) if coded else None,
+        "prompt_version": "v2",
         "heldout_by_kind": {k: {"n": sum(1 for r in held if r["fetch"] == k),
                                 "form": rate([r for r in held if r["fetch"] == k], "form")} for k in ("body", "title")},
         "heldout": {"form": rate(held, "form"), "track": rate(held, "track"), "sectors_jaccard": mean(held, "sectors_jaccard"),

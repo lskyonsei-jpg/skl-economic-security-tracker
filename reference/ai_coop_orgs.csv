@@ -1,0 +1,43 @@
+canonical,country,type,aliases
+정부(미국),US,정부,미국 정부|미 정부|U.S. government|US government|백악관|White House|미 상무부|Commerce|BIS|미 국무부|State Department|OSTP|백악관 과학기술정책실(OSTP)|미 상무부 산업안보국|미국 대통령
+정부(한국),KR,정부,한국 정부|대한민국 정부|청와대|대통령실|산업통상자원부|산업통상부|산업부|외교부|기획재정부|한국 대통령|정부
+과기정통부,KR,정부,과학기술정보통신부|과기부|MSIT|Ministry of Science and ICT
+NSF,US,정부,미국 국립과학재단|National Science Foundation
+미 육군,US,정부,U.S. Army|US Army|미국 육군
+육군,KR,정부,대한민국 육군|한국 육군|ROK Army
+IBM,US,민간,한국IBM|IBM Korea|International Business Machines
+Viv Labs,US,민간,비브랩스|Viv
+Harman,US,민간,하만|Harman International|하만 인터내셔널
+Aurora Innovation,US,민간,오로라|Aurora
+퀄컴,US,민간,Qualcomm|퀄컴 테크놀로지스
+AWS,US,민간,아마존|Amazon|Amazon Web Services|Amazon Web Services Korea|아마존웹서비스|AWS코리아
+Aptiv,US,민간,앱티브
+엔비디아,US,민간,NVIDIA|Nvidia|엔비디아 코리아
+인텔,US,민간,Intel
+Boston Dynamics,US,민간,보스턴다이내믹스|보스턴 다이내믹스
+AMD,US,민간,Advanced Micro Devices
+앤트로픽,US,민간,Anthropic
+구글,US,민간,Google|Google Cloud|구글 클라우드|알파벳|Alphabet
+오픈AI,US,민간,OpenAI|오픈에이아이
+MS,US,민간,마이크로소프트|Microsoft|마이크로소프트 코리아
+테슬라,US,민간,Tesla
+Reflection AI,US,민간,리플렉션 AI|리플렉션
+Micron,US,민간,마이크론|Micron Technology|마이크론 테크놀로지
+Brookfield,US,민간,브룩필드|Brookfield Asset Management
+브로드컴,US,민간,Broadcom
+메타,US,민간,Meta|페이스북|Facebook
+삼성전자,KR,민간,Samsung|Samsung Electronics|삼성|삼성전자 파운드리|삼성 파운드리|Samsung Foundry
+삼성SDS,KR,민간,Samsung SDS
+현대차,KR,민간,현대자동차|Hyundai Motor|Hyundai|현대차그룹|현대자동차그룹|Hyundai Motor Group|현대기아차
+기아,KR,민간,Kia|기아자동차
+현대모비스,KR,민간,Hyundai Mobis
+현대글로비스,KR,민간,Hyundai Glovis
+SK하이닉스,KR,민간,SK hynix|SK Hynix|하이닉스
+SK텔레콤,KR,민간,SKT|SK Telecom
+SK C&C,KR,민간,SK(주) C&C|SK주식회사 C&C|SK C&C
+SK그룹,KR,민간,SK|SK Group|SK(주)
+LG전자,KR,민간,LG Electronics|LG|LG Electronics USA
+네이버,KR,민간,NAVER|네이버클라우드|Naver Cloud
+KT,KR,민간,케이티|KT Corporation
+신세계,KR,민간,신세계그룹|Shinsegae
+카카오,KR,민간,Kakao
