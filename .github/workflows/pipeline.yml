@@ -33,6 +33,10 @@ on:
         type: choice
         options: [none, daily, recode-medium, recode-high]
         default: none
+      mail:
+        description: "끝나면 결과 메일 보내기 (MAIL_USER·MAIL_PASS 필요)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -207,10 +211,11 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v4
 
-      # ---- 메일 알림: 예약 실행이 끝났을 때, 그리고 어떤 실행이든 실패했을 때. MAIL_USER(Gmail 주소)·MAIL_PASS(앱 비밀번호) 가 없으면 건너뛴다.
+      # ---- 메일 알림: 예약 실행이 끝났을 때, 어떤 실행이든 실패했을 때, 수동 실행에서 mail 을 켰을 때, 커밋 메시지에 [mail] 이 있을 때.
+      #      MAIL_USER(Gmail 주소)·MAIL_PASS(앱 비밀번호) 가 없으면 건너뛴다.
       - name: 메일 내용 작성
         id: mail
-        if: always() && env.MAIL_ON == 'true' && (github.event_name == 'schedule' || job.status != 'success')
+        if: always() && env.MAIL_ON == 'true' && (github.event_name == 'schedule' || job.status != 'success' || github.event.inputs.mail == 'true' || contains(github.event.head_commit.message, '[mail]'))
         run: |
           TODAY=$(TZ=Asia/Seoul date +%Y-%m-%d)
           if [ "${{ job.status }}" = "success" ]; then STATUS=성공; else STATUS=실패; fi
