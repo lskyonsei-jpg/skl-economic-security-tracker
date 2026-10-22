@@ -38,6 +38,7 @@
 |---|---|---|
 | `GTA_API_KEY` | GTA 수집 | 파이프라인 실패 |
 | `ANTHROPIC_API_KEY` | 패널 2 자동 코딩(Claude Opus 5.5, effort medium) | 재코딩·자동 수집 단계 건너뜀 |
+| `MAIL_USER` + `MAIL_PASS` | 매일 예약 실행 결과와 실패를 Gmail 로 보냄(자기 자신에게). `MAIL_USER` = Gmail 주소, `MAIL_PASS` = Google 계정 [앱 비밀번호](https://myaccount.google.com/apppasswords) 16자리(2단계 인증 필요) | 메일 단계 건너뜀 |
 
 연결된 API 전체 목록은 사이트 `data.html`(코드는 `publish_site.py` 의 `APIS`). 패널 2 설계는 `문서/20261022_설계_한미AI협력트래커_자동화.md`.
 

@@ -47,6 +47,8 @@ concurrency:
 env:
   MODEL_REVISION: 2cc47b0c3a1224bd949b6154bb0fd966a864d4df   # auto_update.py 와 같아야 한다
   PYTHONUTF8: "1"
+  MAIL_ON: ${{ secrets.MAIL_USER != '' && secrets.MAIL_PASS != '' }}   # Gmail 주소 + 앱 비밀번호가 있을 때만 메일
+  SITE_URL: https://lskyonsei-jpg.github.io/skl-economic-security-tracker
 
 jobs:
   pipeline:
@@ -204,3 +206,38 @@ jobs:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v4
+
+      # ---- 메일 알림: 예약 실행이 끝났을 때, 그리고 어떤 실행이든 실패했을 때. MAIL_USER(Gmail 주소)·MAIL_PASS(앱 비밀번호) 가 없으면 건너뛴다.
+      - name: 메일 내용 작성
+        id: mail
+        if: always() && env.MAIL_ON == 'true' && (github.event_name == 'schedule' || job.status != 'success')
+        run: |
+          TODAY=$(TZ=Asia/Seoul date +%Y-%m-%d)
+          if [ "${{ job.status }}" = "success" ]; then STATUS=성공; else STATUS=실패; fi
+          P=$(python -c "import json;d=json.load(open('site/review.json'));print(d['pending'])" 2>/dev/null || echo "?")
+          NEW=$(grep -ho '신규 [0-9,]*건' logs/change_report_*.md 2>/dev/null | tail -1)
+          echo "subject=[SKL Tracker] $TODAY $STATUS · 판단 대기 ${P}건${NEW:+ · $NEW}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## SKL Economic Security Tracker — $TODAY 갱신 ($STATUS)"
+            echo
+            echo "- 판단 대기 **${P}건** → $SITE_URL/review.html"
+            echo "- GTA 모드: ${{ steps.plan.outputs.mode }} / 변경: ${{ steps.gta.outputs.changed || 'n/a' }}"
+            echo "- 사이트: $SITE_URL"
+            echo "- 실행 기록: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            cat "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          } > mail.md
+      - name: 메일 발송
+        if: always() && steps.mail.outcome == 'success'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USER }}
+          password: ${{ secrets.MAIL_PASS }}
+          from: SKL Tracker <${{ secrets.MAIL_USER }}>
+          to: ${{ secrets.MAIL_USER }}
+          subject: ${{ steps.mail.outputs.subject }}
+          html_body: file://mail.md
+          convert_markdown: true
