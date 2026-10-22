@@ -308,6 +308,29 @@ footer.site { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--l
 
 
 
+def page(title: str, body: str, depth: int = 0) -> str:
+    up = "../" * depth
+    return f"""<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{html.escape(title)}</title>
+<link rel="stylesheet" href="{up}style.css">
+</head>
+<body>
+<div class="wrap">
+{body}
+<footer class="site">
+  {html.escape(SITE_TITLE)} · GTA 자료 기반 · 대외 공개용이 아님
+</footer>
+</div>
+</body>
+</html>
+"""
+
+
 ROW_RE = re.compile(r"<tr>(.*?)</tr>", re.S)
 CELL_RE = re.compile(r"<td[^>]*>.*?</td>", re.S)
 EMPTY_CELL_RE = re.compile(r"^<td[^>]*>\s*</td>$", re.S)
