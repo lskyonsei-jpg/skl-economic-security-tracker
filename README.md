@@ -22,19 +22,14 @@
 
 ## 파이프라인 (`.github/workflows/pipeline.yml`)
 
-1. Release `state` 자산 내려받기 — `master.parquet`(GTA 전량 + BERT 라벨), `prediction_cache.json`, `state.json`, `logs.tar.gz`(변경 리포트), `reference.tar.gz`(BSV·DOTS·WDI), `ai_coop_events.json`·`ai_coop_state.json`
-2. `auto_update.py --mode incremental|full --yes` — GTA API 수집, BERT 분류(새 건만), 직전 스냅숏과 대조, 변경 리포트. 일요일은 full(전량 재대조, 삭제 확인)
-   - 멈춤 조건(`guard()`): 수출통제 9종 유형명 0건, `intervention_id` 결측, 열 수 불일치, 표본 5% 초과 감소, full 삭제 500건 초과 → 실패, Release 는 그대로
-3. 매월 4일: `collect_reference.py`(BSV·IMF DOTS·WDI, 키 불필요)
-4. `ai_coop_tasks.py apply` → `daily` — 연구자 결정(판단 대기 페이지에서 제출한 Issue 또는 `data/ai_coop_decisions.csv`) 반영 후, 탐지 → A·B·C 제안을 `review.html` 에 게시. AI 는 직접 반영하지 않는다
-5. 바뀐 자산만 Release `state` 에 다시 올림
-6. `publish_site.py` → `site/` → GitHub Pages
-7. 메일(`MAIL_USER`·`MAIL_PASS` 있을 때): 예약 실행 결과와 모든 실패. 수동 실행의 `mail` 입력이나 커밋 메시지 `[mail]` 로도 보낼 수 있다
-8. 정리: 이 실행 것 외 아티팩트와 30일 지난 실행 기록 삭제
+패널 1과 패널 2는 독립된 작업(job)으로 병렬로 돈다. 한쪽이 실패해도 다른 쪽과 사이트 배포는 진행된다(실패한 패널은 어제 자료 그대로).
 
-패널 2 Agent 의 단계별 동작은 사이트 코드북(`문서/코드북_패널.md` "업데이트 Agent 작동 순서").
+- **plan** — 예약 실행이면 매일 incremental, 일요일 full, 매월 4일 기준자료. 수동 실행이면 입력값. 코드 push 면 둘 다 건너뛰고 빌드만.
+- **panel1** (산업정책): 보관함(Release `state`)에서 GTA 자료 내려받기 → `auto_update.py`(GTA API 수집, BERT 분류, 변경 리포트; 멈춤 조건 `guard()`) → 매월 4일 `collect_reference.py` → 바뀐 자산만 보관함에 올림
+- **panel2** (한미 AI 협력): 보관함에서 사건·제안 파일 내려받기 → `ai_coop_tasks.py apply`(연구자 결정 반영) → `daily`(검색·중복 제거·코딩·제안) → 사건·제안 파일 올림. 단계별 설명은 코드북 "업데이트 Agent 작동 순서"
+- **site** (둘 다 끝난 뒤, 실패해도): 보관함 전부 내려받기 → `publish_site.py` → GitHub Pages 배포 → 아티팩트·30일 지난 실행 기록 정리 → 메일(`MAIL_USER`·`MAIL_PASS` 있을 때: 예약 실행 결과와 모든 실패, 수동 실행의 `mail` 입력이나 커밋 메시지 `[mail]` 로도)
 
-코드만 push 하면 자료 갱신 없이 빌드·배포만 한다. `문서/` 는 코드북 2종(`코드북_패널.md`, `코드북.md`)만 빌드를 일으킨다. 수동 실행(Actions → pipeline → Run workflow)에서 GTA 모드, 기준자료 수집, AI 협력 일일 실행, 메일 여부를 고른다.
+코드만 push 하면 자료 갱신 없이 빌드·배포만 한다. `문서/` 는 코드북 2종(`코드북_패널.md`, `코드북.md`)만 빌드를 일으킨다. 수동 실행(Actions → pipeline → Run workflow)에서 패널 1 GTA 모드·기준자료, 패널 2 일일 실행, 메일 여부를 따로 고른다.
 
 ## 비밀값 (Settings → Secrets and variables → Actions)
 
