@@ -51,8 +51,12 @@ from pathlib import Path
 import pandas as pd
 
 HERE = Path(__file__).resolve().parent
+# BSV 는 볼트 02_인덱스/원자료/Benchmark 의 사본을 reference/ 에 두고 읽는다(2026-10-22).
+# 출처·수집일·갱신 방법은 reference/README.md.
+BSV = HERE / "reference" / "2026 Voeten - Ideal point estimates 1946-2025.tab"
+# ROOT 는 이 폴더에서 두 단계 위(02_System building). GTA Threads CSV 는 아직 폴더 밖
+# 경로를 가리키며 2026-10-22 현재 원본이 없다 — 3단계(HANDOFF)에서 처리.
 ROOT = HERE.parents[1]
-BSV = ROOT / "02_인덱스/원자료/Benchmark/Voeten BSV - Ideal Points/2026 Voeten - Ideal point estimates 1946-2025.tab"
 THREAD_DIR = ROOT / "05_국정원과제/02_원자료/GTA Threads"
 WORLD = HERE / "reference" / "ne_110m_admin_0_countries.geojson"
 
