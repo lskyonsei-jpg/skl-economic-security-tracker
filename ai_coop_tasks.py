@@ -191,7 +191,38 @@ def task_a(client, system: str, state: dict, events: list[dict], budget: Budget,
                 "evidence": {"url": inp["url"] or c["url"], "via": inp["via"], "kind": inp["kind"], "chars": inp["chars"],
                              "sha256": inp["sha256"], "excerpt": inp["text"][:500]},
             })
-    return proposals
+    return dedup_proposals(proposals, [q for q in state["proposals"] if q["task"] == "A" and q["status"] == "proposed"])
+
+
+def _same_deal(a: dict, b: dict, days: int = 3) -> bool:
+    """같은 거래인가: 양측 주체 집합이 겹치고(Jaccard ≥ 0.5) 날짜가 ±days 안."""
+    try:
+        da, db = dt.date.fromisoformat((a.get("date") or "")[:10]), dt.date.fromisoformat((b.get("date") or "")[:10])
+        if abs((da - db).days) > days:
+            return False
+    except ValueError:
+        pass  # 날짜가 없으면 주체만으로 본다
+    return cc.jaccard(a.get("us_parties", []), b.get("us_parties", [])) >= 0.5 and cc.jaccard(a.get("kr_parties", []), b.get("kr_parties", [])) >= 0.5
+
+
+def dedup_proposals(new: list[dict], pending_old: list[dict]) -> list[dict]:
+    """오늘의 A 제안을 거래 단위로 묶는다. 가장 확신도 높은 것을 대표로 두고 나머지는 extra_sources 로.
+    이미 미결인 이전 제안과 같은 거래면 그쪽에 출처만 보탠다."""
+    kept: list[dict] = []
+    for p in sorted(new, key=lambda x: -(x["payload"].get("confidence") or 0)):
+        home = next((q for q in pending_old if _same_deal(q["payload"], p["payload"])), None) or \
+               next((q for q in kept if _same_deal(q["payload"], p["payload"])), None)
+        if home is None:
+            p.setdefault("extra_sources", [])
+            kept.append(p)
+            continue
+        home.setdefault("extra_sources", []).append({"url": p["evidence"]["url"], "title": p["payload"].get("title"),
+                                                     "form": p["payload"].get("form"), "confidence": p["payload"].get("confidence")})
+        # 대표보다 강한 form 이 나오면 메모에 남긴다(바꾸지는 않는다)
+        if p["payload"].get("form") != home["payload"].get("form"):
+            home.setdefault("form_variants", []).append(p["payload"].get("form"))
+    print(f"[A] 중복 접기: {len(new)}건 -> {len(kept)}건 (이전 미결에 합쳐진 것 {len(new) - len(kept) - sum(len(k.get('extra_sources', [])) for k in kept)}건)")
+    return kept
 
 
 def find_similar(events: list[dict], ev: dict, days: int = 10) -> dict | None:
@@ -448,6 +479,15 @@ def apply_proposal(p: dict, doc: dict, today: str) -> str:
 
 def cmd_apply(today: str) -> int:
     state = load_state(); doc = load_events()
+    # 미결 A 제안 중 같은 거래는 하나로 접는다(예전 실행이 남긴 중복 정리)
+    pending_a = [p for p in state["proposals"] if p["task"] == "A" and p["status"] == "proposed"]
+    kept_ids = {k["id"] for k in dedup_proposals(pending_a, [])}
+    merged = 0
+    for p in pending_a:
+        if p["id"] not in kept_ids:
+            p["status"] = "merged"; merged += 1
+    if merged:
+        save_state(state); print(f"[apply] 중복 제안 {merged}건을 대표 제안에 합침")
     pending = {p["id"]: p for p in state["proposals"] if p["status"] == "proposed"}
     decisions = read_decisions()
     lines = []

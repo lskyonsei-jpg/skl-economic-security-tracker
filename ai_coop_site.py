@@ -247,6 +247,12 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                 ev = p["payload"]
                 extra = (f'<p class="small">기존 사건과 중복 가능: {_esc(p.get("possible_duplicate_of"))}</p>' if p.get("possible_duplicate_of") else "") + \
                         (f'<p class="small">마스터에 없는 기관: {_esc(", ".join(p.get("unknown_orgs", [])))}</p>' if p.get("unknown_orgs") else "")
+                more = p.get("extra_sources") or []
+                if more:
+                    extra += '<p class="small">같은 거래를 다룬 다른 기사 ' + str(len(more)) + '건: ' + " · ".join(
+                        f'<a href="{_esc(m.get("url"))}" target="_blank" rel="noopener">{_esc((m.get("title") or "")[:30])}</a> ({_esc(m.get("form"))}, {_esc(m.get("confidence"))})' for m in more) + '</p>'
+                if p.get("form_variants"):
+                    extra += f'<p class="small">다른 기사의 form 판정: {_esc(", ".join(sorted(set(p["form_variants"]))))}</p>'
                 body = (f'<h3 style="margin:0 0 6px">{_esc(ev.get("title"))}</h3><p>{ev_line(ev)}</p>'
                         f'<p>미국 측 {_esc(", ".join(ev.get("us_parties", [])))} / 한국 측 {_esc(", ".join(ev.get("kr_parties", [])))}</p>'
                         f'<p>{_esc(ev.get("summary"))}</p><p class="note">모델 메모: {_esc(ev.get("note"))}</p>{extra}')
