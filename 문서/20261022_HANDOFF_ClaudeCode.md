@@ -12,7 +12,7 @@
 - **사이트 공개 전환.** GitHub Pages 호스팅. Cloudflare(Pages·Functions 인증·wrangler·R2) 완전 제거. 아래 "무인증 접속 401" 기준은 폐기.
 - 보관소: 결정 1은 **B. GitHub Release 자산**(태그 `state`). R2 안 씀.
 - GTA·Comtrade 원자료는 CI에서 API로 재수집. 재계산 불가한 BERT 예측 캐시와 직전 `master.parquet`만 Release에 보관.
-- 진행: 1단계 완료, 2단계 완료, Cloudflare 제거 + Pages 워크플로(`.github/workflows/deploy-pages.yml`) 작성(모두 2026-10-22). 다음은 3단계.
+- 진행: 1단계 완료, 2단계 완료, Cloudflare 제거 + Pages 워크플로(`.github/workflows/deploy-pages.yml`) 작성, 저장소 공개 전환·Pages 활성화(연구자 승인, API), 첫 배포 성공(모두 2026-10-22). 사이트: https://lskyonsei-jpg.github.io/skl-economic-security-tracker/ . 파이프라인 상태 보관소: Release 태그 `state`(master.parquet, prediction_cache.json, state.json, logs.tar.gz). 다음은 3단계.
 - 미답: 결정 2(Comtrade 키), 3(임계치, 기본값 5%·500건), 4(oil_verify 노출, 코드상 index에 이미 링크됨), 5(볼트 정리, 연구자 몫).
 
 ## 최종 목표 (한 문장)
