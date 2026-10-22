@@ -11,16 +11,16 @@ from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-# 폴더 밖 원자료는 읽지 않는다. 볼트 02_인덱스/원자료/Benchmark 의 사본을 reference/ 에
-# 두고 쓴다(2026-10-22). 출처·수집일·갱신 방법은 reference/README.md.
-REF = HERE / "reference"
-BSV = REF / "2026 Voeten - Ideal point estimates 1946-2025.tab"
+# 기준자료 3종은 collect_reference.py 가 API 로 받아 data/reference/ 에 둔다(2026-10-22, git 제외).
+# CI 는 Release "state" 의 reference.tar.gz 에서 내려받는다. 출처는 collect_reference.py 머리말.
+REF = HERE / "data" / "reference"
+BSV = REF / "bsv_ideal_points.tab"
 # 버블 크기용 무역 비중(2026-08-22). McKinsey Exhibit 2는 "Circle size = value of goods
 # trade"(절대 금액)를 쓰지만, 여기서는 시행국 총무역 대비 비중을 쓴다.
-DOTS = REF / "20260822_IMF_DOTS_US_CN_total_trade_2010-2025.csv"
+DOTS = REF / "imf_dots_us_cn_total_trade.csv"
 # 버블 크기 대안(2026-08-25) — 피영향국 자체 GDP(절대 규모). trade_share와 달리
 # 시행국과 무관한, 그 나라 경제 규모 자체를 나타낸다.
-GDP = REF / "20260822_WDI_GDP_current_USD_2010-2025.csv"
+GDP = REF / "wdi_gdp_current_usd.csv"
 TEMPLATE = HERE / "ip_risk_template.html"
 ALIASES = {
     "United States of America": "United States", "Republic of Korea": "South Korea",

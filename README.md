@@ -9,17 +9,17 @@
 
 | 패널 | 자료 | 빌더 |
 |---|---|---|
-| 1. Distortive Industrial Policy Tracker | GTA(매일 API) × BSV ideal point × IMF DOTS·WDI(`reference/` 사본) | `industrial_policy_site.py` → `ip_risk_site.py` + `ip_risk_template.html` |
+| 1. Distortive Industrial Policy Tracker | GTA(매일 API) × BSV ideal point(Dataverse) × IMF DOTS·WDI(API, 월 1회 `collect_reference.py`) | `industrial_policy_site.py` → `ip_risk_site.py` + `ip_risk_template.html` |
 | 2. 한미 AI 협력 트래커 | Notion DB(야간 1회 읽기) | `ai_coop_site.py` |
 
 반도체 지도·석유·태양광·석유 검증 화면은 코드만 남아 있다(`SITE_EXTRA_PANELS=1` 로 빌드하면 생성). 석유·태양광은 Comtrade 원자료가 있어야 한다.
 
 ## 파이프라인 (`.github/workflows/pipeline.yml`)
 
-1. Release `state` 자산 내려받기 — `master.parquet`(GTA 전량 + BERT 라벨), `prediction_cache.json`, `state.json`, `logs.tar.gz`(변경 리포트), 있으면 `comtrade.tar.gz`·`ai_coop.json`
+1. Release `state` 자산 내려받기 — `master.parquet`(GTA 전량 + BERT 라벨), `prediction_cache.json`, `state.json`, `logs.tar.gz`(변경 리포트), `reference.tar.gz`(BSV·DOTS·WDI), 있으면 `comtrade.tar.gz`·`ai_coop.json`
 2. `auto_update.py --mode incremental|full --yes` — GTA API 수집, BERT 분류(새 건만), 직전 스냅숏과 대조, 변경 리포트. 일요일은 full(전량 재대조, 삭제 확인)
    - 멈춤 조건(`guard()`): 수출통제 9종 유형명 0건, `intervention_id` 결측, 열 수 불일치, 표본 5% 초과 감소, full 삭제 500건 초과 → 실패, Release 는 그대로
-3. 매월 4일: `collect_comtrade.py`(키 있을 때)
+3. 매월 4일: `collect_reference.py`(BSV·IMF DOTS·WDI, 키 불필요), `collect_comtrade.py`(키 있을 때)
 4. `ai_coop_site.py fetch`(Notion 비밀값 있을 때)
 5. 바뀐 자산만 Release `state` 에 다시 올림
 6. `publish_site.py` → `site/` → GitHub Pages

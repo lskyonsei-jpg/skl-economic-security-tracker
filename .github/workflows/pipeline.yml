@@ -1,10 +1,10 @@
 # 전체 파이프라인 — 사람이 아무것도 실행하지 않는다.
 #
-#   Release "state" 내려받기 -> GTA 갱신(auto_update.py) -> (월 1회) Comtrade 수집
+#   Release "state" 내려받기 -> GTA 갱신(auto_update.py) -> (월 1회) Comtrade·기준자료 수집
 #   -> (설정 시) Notion 한미 AI 협력 DB 읽기 -> Release "state" 올리기 -> 사이트 빌드 -> GitHub Pages 배포
 #
 # 일정(UTC 21:00 = 한국 06:00)
-#   매일: incremental.  일요일: full(전량 재대조).  매월 4일: Comtrade 도 수집.
+#   매일: incremental.  일요일: full(전량 재대조).  매월 4일: Comtrade 와 기준자료(BSV·IMF DOTS·WDI)도 수집.
 # 비밀값(Settings > Secrets and variables > Actions)
 #   GTA_API_KEY(필수), COMTRADE_API_KEY(없으면 수집 건너뜀), NOTION_TOKEN·NOTION_DB_ID(없으면 패널 2 자료 갱신 건너뜀)
 # 멈춤 조건은 auto_update.py 의 guard() 가 판정한다. 걸리면 Release 를 건드리지 않고 실패한다.
@@ -26,6 +26,10 @@ on:
         default: incremental
       comtrade:
         description: "Comtrade 수집 실행"
+        type: boolean
+        default: false
+      reference:
+        description: "기준자료(BSV·IMF DOTS·WDI) 수집 실행"
         type: boolean
         default: false
 
@@ -60,15 +64,16 @@ jobs:
           case "${{ github.event_name }}" in
             schedule)
               if [ "$DOW" = "7" ]; then MODE=full; else MODE=incremental; fi
-              if [ "$DOM" = "04" ]; then COMTRADE=true; else COMTRADE=false; fi ;;
+              if [ "$DOM" = "04" ]; then COMTRADE=true; REFERENCE=true; else COMTRADE=false; REFERENCE=false; fi ;;
             workflow_dispatch)
-              MODE="${{ github.event.inputs.mode }}"; COMTRADE="${{ github.event.inputs.comtrade }}" ;;
+              MODE="${{ github.event.inputs.mode }}"; COMTRADE="${{ github.event.inputs.comtrade }}"; REFERENCE="${{ github.event.inputs.reference }}" ;;
             *)
-              MODE=skip; COMTRADE=false ;;
+              MODE=skip; COMTRADE=false; REFERENCE=false ;;
           esac
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
           echo "comtrade=$COMTRADE" >> "$GITHUB_OUTPUT"
-          echo "GTA 모드: $MODE / Comtrade: $COMTRADE"
+          echo "reference=$REFERENCE" >> "$GITHUB_OUTPUT"
+          echo "GTA 모드: $MODE / Comtrade: $COMTRADE / 기준자료: $REFERENCE"
 
       - uses: actions/setup-python@v5
         with:
@@ -100,7 +105,7 @@ jobs:
           gh release download state -R "$GITHUB_REPOSITORY" -D _state
           for f in master.parquet prediction_cache.json state.json; do [ -f "_state/$f" ] && mv "_state/$f" cache/; done
           [ -f _state/logs.tar.gz ] && tar -xzf _state/logs.tar.gz -C logs
-          for a in comtrade gta_threads; do
+          for a in comtrade gta_threads reference; do
             if [ -f "_state/$a.tar.gz" ]; then mkdir -p "data/$a" && tar -xzf "_state/$a.tar.gz" -C "data/$a"; fi
           done
           [ -f _state/ai_coop.json ] && cp _state/ai_coop.json data/ai_coop.json
@@ -129,6 +134,11 @@ jobs:
           if [ -z "$COMTRADE_API_KEY" ]; then echo "COMTRADE_API_KEY 없음 — 건너뜀"; exit 0; fi
           python collect_comtrade.py && echo "changed=true" >> "$GITHUB_OUTPUT"
 
+      - name: 기준자료 수집 (BSV·IMF DOTS·WDI)
+        id: reference
+        if: steps.plan.outputs.reference == 'true'
+        run: python collect_reference.py && echo "changed=true" >> "$GITHUB_OUTPUT"
+
       - name: Notion 한미 AI 협력 DB 읽기
         id: notion
         env:
@@ -139,7 +149,7 @@ jobs:
           python ai_coop_site.py fetch && echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Release "state" 올리기
-        if: steps.gta.outputs.changed == 'true' || steps.comtrade.outputs.changed == 'true' || steps.notion.outputs.changed == 'true'
+        if: steps.gta.outputs.changed == 'true' || steps.comtrade.outputs.changed == 'true' || steps.reference.outputs.changed == 'true' || steps.notion.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -150,6 +160,9 @@ jobs:
           fi
           if [ "${{ steps.comtrade.outputs.changed }}" = "true" ]; then
             tar -czf comtrade.tar.gz -C data/comtrade . && UP="$UP comtrade.tar.gz"
+          fi
+          if [ "${{ steps.reference.outputs.changed }}" = "true" ]; then
+            tar -czf reference.tar.gz -C data/reference . && UP="$UP reference.tar.gz"
           fi
           if [ "${{ steps.notion.outputs.changed }}" = "true" ]; then UP="$UP data/ai_coop.json"; fi
           gh release upload state $UP -R "$GITHUB_REPOSITORY" --clobber
@@ -166,7 +179,7 @@ jobs:
             echo "## pipeline"
             echo
             echo "- GTA 모드: ${{ steps.plan.outputs.mode }} / 변경: ${{ steps.gta.outputs.changed || 'n/a' }}"
-            echo "- Comtrade: ${{ steps.comtrade.outputs.changed || '건너뜀' }} / Notion: ${{ steps.notion.outputs.changed || '건너뜀' }}"
+            echo "- Comtrade: ${{ steps.comtrade.outputs.changed || '건너뜀' }} / 기준자료: ${{ steps.reference.outputs.changed || '건너뜀' }} / Notion: ${{ steps.notion.outputs.changed || '건너뜀' }}"
             echo "- state.json: $(tr -d '\n' < cache/state.json | cut -c1-200)"
             echo "- site: $(find site -type f | wc -l)개 파일, $(du -sh site | cut -f1)"
             R=$(ls logs/change_report_*.md 2>/dev/null | tail -1)
