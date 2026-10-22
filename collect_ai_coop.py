@@ -275,7 +275,7 @@ def code_article(client, system: str, meta: dict, body: str, effort: str, kind: 
         user = (f"[기사 메타]\nURL: {meta.get('url', '')}\n매체/도메인: {meta.get('domain', '')}\n게재일(참고): {meta.get('published', '')}\n"
                 f"제목: {meta.get('title', '')}\n\n[본문]\n{body}")
     response = client.messages.create(
-        model=MODEL, max_tokens=4000,
+        model=MODEL, max_tokens=16000,
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
@@ -285,8 +285,13 @@ def code_article(client, system: str, meta: dict, body: str, effort: str, kind: 
              "cache_write": getattr(response.usage, "cache_creation_input_tokens", 0) or 0}
     if response.stop_reason == "refusal":
         return {"events": [], "article_note": "refusal", "refusal": True}, usage
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError("출력 잘림(max_tokens)")
     text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text), usage
+    try:
+        return json.loads(text), usage
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"JSON 파싱 실패: {exc}") from exc
 
 
 # ------------------------------------------------------------------ 본문 수집
@@ -500,6 +505,11 @@ def cmd_recode(effort: str, limit: int | None) -> int:
             print(f"  [API 오류] {exc.status_code} {str(exc.message)[:160]}")
             if exc.status_code == 400 and sum(1 for x in results if str(x.get("error", "")).startswith("400")) >= 3:
                 print("  400 오류 3회 — 요청 형식 문제로 보고 중단"); break
+            continue
+        except (RuntimeError, anthropic.APIConnectionError) as exc:
+            calls += 1
+            rec["fetch"] = inp["kind"]; rec["error"] = str(exc)[:200]; results.append(rec)
+            print(f"  [오류] {e['date']} {e['title'][:30]} — {str(exc)[:120]}")
             continue
         calls += 1
         for k in usage_total:
