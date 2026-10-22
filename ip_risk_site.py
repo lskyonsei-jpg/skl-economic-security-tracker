@@ -205,6 +205,16 @@ def build(out: Path) -> bool:
 
     FIXED_BLOC_YEAR = 2021
     fixed_blocs = b21
+    # 2026-10-22(연구자 결정): 지도·순위·추이의 risk_index 거리도 블록 분류와 같은 BSV 2021 한 해로
+    # 고정한다. 이전엔 조치 연도의 거리를 썼다(기준연도가 화면 안에 두 개였다). 2021년에 BSV 값이
+    # 없는 나라는 2010~2025 중 2021과 가장 가까운 해의 값을 쓰고 distance_year_used 에 적는다.
+    def _fixed_position(country: str) -> tuple[float, int] | None:
+        for y in sorted(range(2010, 2026), key=lambda y: (abs(y - FIXED_BLOC_YEAR), y)):
+            if (y, country) in positions:
+                return positions[(y, country)][1], y
+        return None
+    fixed_position_cache: dict[str, tuple[float, int] | None] = {}
+    distance_fallback_countries: set[str] = set()
     _fdu, _fdc = _year_dists(FIXED_BLOC_YEAR)
     fixed_seg = {c: (_fdc[c] - _fdu[c]) / (_fdu[c] + _fdc[c])
                  for c in _fdu.keys() & _fdc.keys() if _fdu[c] + _fdc[c]}
@@ -221,15 +231,24 @@ def build(out: Path) -> bool:
                 if country == imp_bsv: continue
                 n = exposed[(imp, year, country)]; share = n / denom if denom else 0.0
                 pos = positions[(bsv_year, country)][1]
-                distance = abs(imp_pos - pos)
+                distance_annual = abs(imp_pos - pos)
                 distance_us = abs(us_pos - pos)
                 distance_cn = abs(cn_pos - pos)
+                if country not in fixed_position_cache:
+                    fixed_position_cache[country] = _fixed_position(country)
+                fixed_pos = fixed_position_cache[country]
+                imp_fixed = fixed_position_cache.setdefault(imp_bsv, _fixed_position(imp_bsv))
+                distance, distance_year = abs(imp_fixed[0] - fixed_pos[0]), fixed_pos[1]
+                if distance_year != FIXED_BLOC_YEAR:
+                    distance_fallback_countries.add(country)
                 tshare = trade.get((DOTS_REPORTER[imp], ISO_FIX.get(iso3, iso3), bsv_year))
                 gdp_usd = gdp.get((ISO_FIX.get(iso3, iso3), bsv_year))
                 fx = fixed_dist.get((imp, country))
                 rows.append({"implementer": imp, "affected_country": country, "affected_iso3": iso3,
                              "year": year, "implementer_ip_total": denom, "exposed_interventions": n,
                              "exposure_share": round(share, 8), "bsv_distance": round(distance, 8),
+                             "distance_year_used": distance_year,
+                             "bsv_distance_annual": round(distance_annual, 8),
                              "bsv_distance_us": round(distance_us, 8),
                              "bsv_distance_fixed": round(fx[0], 8) if fx else None,
                              "bsv_distance_us_fixed": round(fx[1], 8) if fx else None,
@@ -243,9 +262,15 @@ def build(out: Path) -> bool:
                              "bsv_year_used": bsv_year, "risk_index": round(share * distance, 8),
                              "distance_carried_forward": year > 2025, "partial_policy_year": year == 2026})
     result = {"built_at": date.today().isoformat(), "gta_asof": payload.get("gta_asof"),
-              "definition": "exposure_share × annual BSV AbsIdealDiff",
+              "definition": "exposure_share × BSV AbsIdealDiff fixed at 2021",
+              "distance_note": ("bsv_distance = |시행국 ideal point − 피영향국 ideal point|, BSV 2021 한 해로 고정 "
+                                "(2026-10-22부터, 연구자 결정. 이전엔 조치 연도의 거리를 썼다 — bsv_distance_annual 에 남김). "
+                                "블록 분류(fed_bloc)와 기준연도를 맞춘 것이다. 따라서 추이 그래프의 변화는 전부 노출 비중의 변화다. "
+                                "2021년 값이 없는 나라는 가장 가까운 해를 쓰고 distance_year_used 에 적는다. "
+                                "BSV는 거리가 아니라 국가별 ideal point를 주며 거리는 절대차로 계산한다(Dataverse dyads 파일의 AbsIdealDiff와 같은 정의)."),
+              "distance_fallback_countries": sorted(distance_fallback_countries),
               "distance_us_note": "bsv_distance_us = 미국 ideal point 기준 절대거리. 두 시행국 패널에 같은 축을 쓰기 위한 값.",
-              "distance_fixed_note": ("*_fixed = BSV 2010~2025 전 구간 평균 거리. 지도·순위·추이의 risk_index는 연도별 거리를 유지한다."),
+              "distance_fixed_note": ("*_fixed = BSV 2010~2025 전 구간 평균 거리(산점도용). risk_index 는 bsv_distance(2021 고정)를 쓴다."),
               "fed_seg_note": (f"fed_seg = Fed(2025) FEDS Notes 정렬점수, BSV {FIXED_BLOC_YEAR} IPD 고정. "
                                 "seg(s)=[IPD(s,China)-IPD(s,US)]/[IPD(s,US)+IPD(s,China)], 모든 연도·행에 같은 값. "
                                 "+1 완전 친미 / -1 완전 친중. 원 논문은 이 값의 **수준**을 쓰지 않고 순위로만 쓴다 "
