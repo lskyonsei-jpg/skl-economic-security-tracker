@@ -5,8 +5,9 @@ logs/change_report_*.md 를 읽어 site/ 아래에 HTML을 쓴다. 비밀값은 
 GitHub Pages 로 올린다(2026-10-22, Cloudflare Pages 에서 이전).
 
   site/
-    index.html              전체 목록 (최신순)
-    r/<stamp>.html          리포트 하나
+    index.html              랜딩(띠 + 패널 2개 + 최근 변경)
+    ip_risk.html, ai_coop.html, data.html
+    r/<stamp>.html          변경 리포트 하나
 
 markdown 변환은 markdown 라이브러리에 맡긴다. 직접 짜지 않는 이유는 리포트
 표 칸이 GTA 원문을 그대로 담기 때문이다. auto_update.py 의 cell() 은 `|` 만
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import os
 import re
 import shutil
@@ -25,6 +27,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import ai_coop_site
 import bloc_site
 import industrial_policy_site
 import ip_risk_site
@@ -35,6 +38,8 @@ import solar_site
 HERE = Path(__file__).resolve().parent
 LOGS = HERE / "logs"
 SITE = HERE / "site"
+STATE_PATH = HERE / "cache" / "state.json"
+STATE: dict = json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.is_file() else {}
 
 SITE_TITLE = "SKL Economic Security Tracker"
 REPORT_GLOB = "change_report_*.md"
@@ -196,136 +201,26 @@ class Report:
         ]
 
 
-CSS = """
-/* 한글 본문용 명조 (Noto Serif KR Black). 윈도우에 기본 탑재된 한글 명조가
-   바탕(Batang)뿐이라 화면용으로 쓰기엔 낡아 보인다.
-   폰트 파일은 assets/fonts/ 에 두고 사이트에 같이 올린다 — 바깥으로 요청이
-   나가지 않는다. 조각내지 않은 통짜 파일 하나다(1.55MB). */
-@import url("fonts.css");
 
-*, *::before, *::after { box-sizing: border-box; }
-:root {
-  --bg: #fff1e5; --fg: #000000; --muted: #000000; --line: #302824;
-  --card: #f7ded2; --accent: #000000; --warn: #8c2f24; --radius: 10px;
-  /* 강조용 자주. 크림색 바탕 위에서 검정과 확실히 갈리는 선까지 어둡게 잡았다. */
-  --plum: #7b1f52;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #fff1e5; --fg: #000000; --muted: #000000; --line: #302824;
-    --card: #f7ded2; --accent: #000000; --warn: #8c2f24; --plum: #7b1f52;
-  }
-}
-html { -webkit-text-size-adjust: 100%; }
-/* 라틴 글자는 Times New Roman, 한글은 그 뒤 명조로 떨어진다. 브라우저는
-   글자 하나하나마다 앞에서부터 그 글자가 있는 폰트를 고르므로, 이 순서면
-   영문·숫자는 TNR, 한글은 Noto Serif KR 로 찍힌다. */
-body {
-  margin: 0; background: var(--bg); color: var(--fg);
-  font-family: "Times New Roman", Times,
-               "Noto Serif KR", "본명조", "Nanum Myeongjo", "Batang", serif;
-  font-size: 17px; line-height: 1.75; word-break: keep-all; font-weight: 900;
-}
-/* 강조는 색으로 준다. 굵기는 이미 전부 700 이라 더 줄 것이 없다. */
-article strong, article b { color: var(--plum); }
-.wrap { max-width: 1040px; margin: 0 auto; padding: 32px 20px 96px; }
-a { color: var(--accent); }
-header.site { border-bottom: 2px solid var(--line); margin-bottom: 28px; padding-bottom: 18px; }
-header.site h1 { font-size: 1.35rem; margin: 0 0 6px; letter-spacing: -0.01em; color: #000; }
-header.site p { margin: 0; color: var(--muted); font-size: 0.9rem; }
-.back { display: inline-block; margin-bottom: 18px; font-size: 0.9rem; text-decoration: none; }
-.back:hover { text-decoration: underline; }
-
-ul.reports { list-style: none; margin: 0; padding: 0; }
-ul.reports li { margin-bottom: 12px; }
-a.card {
-  display: block; padding: 16px 18px; background: var(--card);
-  border: 2px solid var(--line); border-radius: var(--radius);
-  text-decoration: none; color: inherit;
-}
-a.card:hover { border-color: var(--accent); }
-.card .date { font-weight: 700; font-size: 1.1rem; }
-.card .sub { color: var(--muted); font-size: 0.85rem; margin-top: 2px; }
-.badges { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
-.badge {
-  font-size: 0.8rem; padding: 2px 9px; border-radius: 999px;
-  border: 2px solid var(--line); background: var(--bg); color: var(--muted);
-  white-space: nowrap;
-}
-.badge b { color: var(--plum); }
-/* 위쪽 두 개는 리포트가 아니라 별도 화면으로 가는 문이다. 자주색으로 띄운다. */
-a.card.nav .date { color: var(--plum); }
-
-article h1 { font-size: 1.5rem; margin: 0 0 20px; letter-spacing: -0.01em; }
-article h2 { font-size: 1.15rem; margin: 40px 0 12px; padding-top: 14px;
-             border-top: 1px solid var(--line); color: var(--plum); }
-article h3 { font-size: 1rem; margin: 26px 0 10px; color: var(--muted); }
-article blockquote {
-  margin: 18px 0; padding: 12px 16px; border-left: 3px solid var(--warn);
-  background: var(--card); border-radius: 0 var(--radius) var(--radius) 0;
-  font-size: 0.92rem;
-}
-article blockquote p { margin: 6px 0; }
-article code {
-  background: var(--card); border: 1px solid var(--line); border-radius: 4px;
-  padding: 1px 5px; font-size: 0.86em;
-  font-family: "Cascadia Mono", Consolas, monospace;
-}
-.tablebox { overflow-x: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: var(--radius); }
-/* 표가 든 절은 접어 둔다. summary 가 h2/h3 자리를 그대로 받는다. */
-details.sec > summary {
-  cursor: pointer; list-style: none; user-select: none;
-  display: flex; align-items: baseline; gap: 8px;
-}
-details.sec > summary::-webkit-details-marker { display: none; }
-details.sec > summary::before {
-  content: "▾"; font-size: 0.8em; flex: none;
-  transform: rotate(-90deg); transition: transform 0.12s;
-}
-details.sec[open] > summary::before { transform: rotate(0deg); }
-details.sec.lv2 > summary {
-  font-size: 1.15rem; margin: 40px 0 12px; padding-top: 14px;
-  border-top: 1px solid var(--line); color: var(--plum);
-}
-details.sec.lv3 > summary {
-  font-size: 1rem; margin: 26px 0 10px; color: var(--muted);
-}
-details.sec > summary:hover { color: var(--accent); }
-details.sec > .secbody { margin-left: 2px; }
-table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
-th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { background: var(--card); white-space: nowrap; position: sticky; top: 0; }
-tr:last-child td { border-bottom: 0; }
-td { word-break: break-word; }
-
-footer.site { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
-              color: var(--muted); font-size: 0.82rem; }
-@media (max-width: 560px) {
-  .wrap { padding: 20px 14px 64px; }
-  table { font-size: 0.8rem; }
-}
-"""
-
-
-
-def page(title: str, body: str, depth: int = 0) -> str:
+def page(title: str, body: str, depth: int = 0, current: str = "") -> str:
     up = "../" * depth
+    nav = ai_coop_site.nav(current)
+    foot = ai_coop_site.footer(STATE.get("data_end_date", "—"), datetime.now().strftime("%Y-%m-%d %H:%M"))
+    if depth:
+        nav = nav.replace('href="', f'href="{up}')
+        foot = foot.replace('href="', f'href="{up}')
     return f"""<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
 <title>{html.escape(title)}</title>
-<link rel="stylesheet" href="{up}style.css">
+<link rel="stylesheet" href="{up}site.css">
 </head>
 <body>
-<div class="wrap">
+{nav}
 {body}
-<footer class="site">
-  {html.escape(SITE_TITLE)} · GTA 자료 기반 · 대외 공개용이 아님
-</footer>
-</div>
+{foot}
 </body>
 </html>
 """
@@ -428,51 +323,53 @@ def render_report(report: Report) -> str:
     body = to_html(report.text)
     head = '<a class="back" href="../index.html">← 전체 목록</a>\n<article>\n'
     return page(f"{report.data_date} 변경 내역 · {SITE_TITLE}",
-                head + body + "\n</article>", depth=1)
+                head + body + "\n</article>", depth=1, current="index.html")
 
 
 def render_index(reports: list[Report]) -> str:
-    built = datetime.now().strftime("%Y-%m-%d %H:%M")
-    parts = [
-        '<header class="site">',
-        f"  <h1>{html.escape(SITE_TITLE)}</h1>",
-        f"  <p>GTA 변경 내역 · 리포트 {len(reports)}건 · 업데이트 {html.escape(built)}</p>",
-        "</header>",
-        '<p><a class="card nav" href="semi.html"><span class="date">반도체 공급망 지도</span></a></p>',
-        '<p><a class="card nav" href="ip_risk.html"><span class="date">Distortive Industrial Policy Tracker</span></a></p>',
-        '<p><a class="card nav" href="bloc.html"><span class="date">석유 산업의 분절화와 재연결</span></a></p>',
-        '<p><a class="card nav" href="oil_verify.html"><span class="date">석유 산업의 분절화와 재연결(검증용)</span></a></p>',
-        '<p><a class="card nav" href="solar.html"><span class="date">태양광 산업의 분절화와 재연결</span></a></p>',
-    ]
+    newest = reports[0] if reports else None
+    asof = STATE.get("data_end_date") or (newest.data_date if newest else "—")
+    rows = STATE.get("rows")
+    meta = [("자료 기준일", asof), ("전체 표본", f"{rows:,}건" if rows else (newest.rows if newest else "—")),
+            ("변경 리포트", f"{len(reports)}건"), ("마지막 전량 점검", STATE.get("last_full_rebuild") or "—")]
+    meta_html = "".join(f"<div>{html.escape(k)}<b>{html.escape(str(v))}</b></div>" for k, v in meta)
+    hero = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Research Dashboard</span>'
+            f'<h1>{html.escape(SITE_TITLE)}</h1>'
+            f'<p>Global Trade Alert 의 개입 조치를 매일 받아 BERT 로 산업정책 후보를 가르고, 지정학적 거리와 무역 구조에 얹어 읽는다. '
+            f'두 번째 패널은 한미 AI 협력 사건을 같은 틀로 쌓는다. 모델 라벨은 후보군이며 확정 분류가 아니다.</p>'
+            f'<div class="meta">{meta_html}</div></div></header>')
+    cards = ('<section class="section"><div class="wrap"><span class="eyebrow">Panels</span><div class="grid grid-2">'
+             '<a class="panel-card" href="ip_risk.html"><span class="eyebrow">Panel 1</span><h2>Distortive Industrial Policy Tracker</h2>'
+             '<p>GTA Red·Amber 산업정책 조치의 피영향국 노출을 연도별 BSV 지정학적 거리와 교차한 지도·순위·추이·산점도·블록 구성.</p>'
+             '<span class="go">열기 →</span></a>'
+             '<a class="panel-card" href="ai_coop.html"><span class="eyebrow">Panel 2</span><h2>한미 AI 협력 트래커</h2>'
+             '<p>미국·한국 정부와 민간 주체의 AI 협력 사건을 형태(MOU·선언·집행·확정계약)와 분야별로 타임라인·매트릭스로 본다. 코딩은 연구자가 확정한다.</p>'
+             '<span class="go">열기 →</span></a></div></div></section>')
+    items = []
+    for report in reports[:10]:
+        badges = "".join(f'<span class="badge">{html.escape(l)} <b>{html.escape(v)}</b></span>' for l, v in report.counts())
+        items.append(f'<li><span class="d"><a href="r/{report.slug}.html">{html.escape(report.data_date)}</a></span>'
+                     f'<span>{badges}</span><span class="m">{html.escape(report.mode)} · {report.when.strftime("%m-%d %H:%M")}</span></li>')
+    changes = ('<section class="section"><div class="wrap"><span class="eyebrow">Recent changes</span>'
+               '<div class="panel"><div class="panel-head"><span>GTA 변경 리포트 (최신순)</span><a href="data.html">자료 내려받기 →</a></div>'
+               f'<div class="panel-body"><ul class="changes">{"".join(items) or "<li>아직 리포트가 없습니다.</li>"}</ul></div></div></div></section>')
+    return page(SITE_TITLE, hero + cards + changes, current="index.html")
 
-    if not reports:
-        parts.append("<p>아직 리포트가 없습니다. 업데이트를 한 번 실행하면 여기에 쌓입니다.</p>")
-        return page(SITE_TITLE, "\n".join(parts))
 
-    newest = reports[0]
-    if newest.rows:
-        parts.append(f'<p class="sub" style="color:var(--muted);font-size:0.9rem;">'
-                     f"최신 기준일 {html.escape(newest.data_date)} · "
-                     f"전체 표본 {html.escape(newest.rows)}</p>")
-
-    parts.append('<ul class="reports">')
-    for report in reports:
-        badges = "".join(
-            f'<span class="badge">{html.escape(label)} <b>{html.escape(value)}</b></span>'
-            for label, value in report.counts()
-        )
-        sub_bits = [report.when.strftime("%Y-%m-%d %H:%M 실행")]
-        if report.mode:
-            sub_bits.append(report.mode)
-        parts.append(
-            f'<li><a class="card" href="r/{report.slug}.html">'
-            f'<div class="date">{html.escape(report.data_date)}</div>'
-            f'<div class="sub">{html.escape(" · ".join(sub_bits))}</div>'
-            f'<div class="badges">{badges}</div>'
-            f"</a></li>"
-        )
-    parts.append("</ul>")
-    return page(SITE_TITLE, "\n".join(parts))
+def render_data(reports: list[Report]) -> str:
+    repo = "https://github.com/lskyonsei-jpg/skl-economic-security-tracker"
+    files = [("ip_risk.json", "패널 1 — 국가·연도별 리스크·노출·거리"), ("ip_sectors.json", "패널 1 — 조치 단위 원자료(산점도·회귀)"),
+             ("ai_coop.json", "패널 2 — 사건 목록과 집계"), ("world.geojson", "지도 (Natural Earth 1:110m)")]
+    rows = "".join(f'<tr><td><a href="{f}" download>{f}</a></td><td>{html.escape(d)}</td></tr>' for f, d in files)
+    body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Data</span><h1>자료와 코드</h1>'
+            f'<p>화면이 읽는 JSON 을 그대로 내려받을 수 있다. 전체 GTA 스냅숏(master.parquet)과 BERT 예측 캐시는 저장소 Release 에 있다.</p></div></header>'
+            f'<section class="section"><div class="wrap grid grid-2"><div class="panel"><div class="panel-head">사이트 JSON</div>'
+            f'<div class="panel-body"><table><tbody>{rows}</tbody></table></div></div>'
+            f'<div class="panel"><div class="panel-head">저장소</div><div class="panel-body"><p><a href="{repo}">{repo}</a></p>'
+            f'<p><a href="{repo}/releases/tag/state">Release “state”</a> — master.parquet(전량 + BERT 라벨), prediction_cache.json, state.json, 변경 리포트</p>'
+            f'<p><a href="{repo}/actions">Actions</a> — 매일 06:00 KST 갱신·배포 기록</p>'
+            f'<p class="note">D_IP_bert_3 == 1 은 산업정책 후보군이다. 확정 라벨이 아니다. GTA Red/Amber 는 외국 상업이익에 해로운 조치, Green 은 비차별적 자유화다.</p></div></div></div></section>')
+    return page(f"자료 · {SITE_TITLE}", body, current="data.html")
 
 
 def collect(logs: Path) -> list[Report]:
@@ -506,107 +403,40 @@ def _force_remove(func, path, error):
         raise error
 
 
-FONT_SRC = HERE / "assets" / "fonts"
-
-
-def copy_fonts(out: Path) -> int:
-    """assets/fonts/ 를 site/ 로 옮긴다.
-
-    폰트를 사이트에 같이 올려야 바깥(구글)으로 요청이 나가지 않는다.
-    noto-serif-kr.css 는 site/fonts.css 로, woff2 는 site/fonts/ 로 간다.
-    css 안의 경로가 `fonts/....woff2` 라 이 배치라야 맞아 떨어진다.
-
-    폰트는 조각내지 않은 한 파일이다. 구글이 내려주는 한글 웹폰트는 120여
-    조각으로 쪼개져 있는데, 조각마다 도착 시각이 달라 한 낱말 안에서 글자마다
-    글꼴이 달라 보였다(2026-08-15 "반도체 공급망 지도" — '반'과 '급망'만 굵게).
-    조각을 다 받아 하나로 합쳐 버리면 섞일 수가 없다. 만드는 방법은
-    README 의 폰트 항목에 적어 두었다.
-
-    폰트가 없어도 사이트는 만든다. 그때는 바탕체로 보일 뿐이다.
-    """
-    css = FONT_SRC / "noto-serif-kr.css"
-    if not css.is_file():
-        print("    폰트 없음 — 명조 대신 시스템 기본 글꼴로 보입니다")
-        (out / "fonts.css").write_text("/* 폰트 파일 없음 */\n", encoding="utf-8")
-        return 0
-    (out / "fonts.css").write_text(css.read_text(encoding="utf-8"), encoding="utf-8")
-    dest = out / "fonts"
-    dest.mkdir(exist_ok=True)
-    n = 0
-    for woff in FONT_SRC.glob("*.woff2"):
-        shutil.copy2(woff, dest / woff.name)
-        n += 1
-    return n
 
 
 def build(logs: Path = LOGS, out: Path = SITE, quiet: bool = False) -> Path:
-    """site/ 를 통째로 다시 만든다. 반환값은 site 경로."""
+    """site/ 를 통째로 다시 만든다. 반환값은 site 경로.
+
+    2026-10-22: 패널 2개 체제. 반도체·석유·태양광·석유검증 화면은 SITE_EXTRA_PANELS=1 일 때만 만든다
+    (코드는 남겨 두었고 index 에서 내렸다)."""
     reports = collect(logs)
-
-    # 2026-10-15: 원자료(05_국정원과제/02_원자료 아래 Comtrade·GTA CSV)가 폴더 정리로
-    # 없어진 뒤 빌드하면 bloc/solar 빌더가 "없음 — 건너뜀"으로 돌아오고, 그 패널의
-    # html/json 은 site/ 를 지웠으니 통째로 사라진다(2026-09-06 빌드가 마지막 정상본).
-    # 그래서 site/ 를 지우지 않고 옆으로 치워 두었다가, 건너뛴 빌더의 산출물만
-    # 그대로 되돌린다. 원자료가 돌아오면 이 분기는 저절로 안 탄다.
-    prev = out.with_name(out.name + "_prev")
-    if prev.exists():
-        shutil.rmtree(prev, onexc=_force_remove)
     if out.exists():
-        out.rename(prev)
+        shutil.rmtree(out, onexc=_force_remove)
     (out / "r").mkdir(parents=True)
+    (out / ".nojekyll").write_text("", encoding="utf-8")   # GitHub Pages 의 Jekyll 처리 끄기
+    shutil.copy2(HERE / "assets" / "site.css", out / "site.css")
+    shutil.copy2(HERE / "reference" / "ne_110m_admin_0_countries.geojson", out / "world.geojson")
 
-    # GitHub Pages 의 Jekyll 처리를 끈다. 없으면 _ 로 시작하는 경로가 조용히 빠진다.
-    (out / ".nojekyll").write_text("", encoding="utf-8")
-
-    (out / "style.css").write_text(CSS.strip() + "\n", encoding="utf-8")
-    copy_fonts(out)
     (out / "index.html").write_text(render_index(reports), encoding="utf-8")
+    (out / "data.html").write_text(render_data(reports), encoding="utf-8")
     for report in reports:
-        (out / "r" / f"{report.slug}.html").write_text(
-            render_report(report), encoding="utf-8"
-        )
+        (out / "r" / f"{report.slug}.html").write_text(render_report(report), encoding="utf-8")
 
-    semi_built = semiconductor_site.build(out)
-    ip_built = industrial_policy_site.build(out)
+    industrial_policy_site.build(out)      # ip_us_cn.json — 패널 1 의 입력
     risk_built = ip_risk_site.build(out)
-    bloc_built = bloc_site.build(out)
-    solar_built = solar_site.build(out)
-
-    for built, names in (
-        (semi_built, ("semi.html", "semi.json")),
-        (ip_built, ("ip_us_cn.json",)),
-        (risk_built, ("ip_risk.html", "ip_risk.json", "ip_sectors.json")),
-        (bloc_built, ("bloc.html", "bloc.json", "oil_trade.json")),
-        (solar_built, ("solar.html", "solar_trade.json")),
-    ):
-        if built:
-            continue
-        for name in names:
-            if (prev / name).is_file():
-                shutil.copy2(prev / name, out / name)
-                print(f"    원자료 없음 → 직전 빌드의 {name} 보존")
-    if prev.exists():
-        shutil.rmtree(prev, onexc=_force_remove)
-
-    # 검증 패널은 위에서 만들어졌거나 되돌려진 oil_trade.json 만 읽는다.
-    verify_built = oil_verify_site.build(out)
+    ai_built = ai_coop_site.build(out)
+    extra = ""
+    if os.environ.get("SITE_EXTRA_PANELS") == "1":
+        semi = semiconductor_site.build(out)
+        bloc = bloc_site.build(out)
+        solar = solar_site.build(out)
+        verify = oil_verify_site.build(out)
+        extra = f", 추가 패널(반도체 {semi}, 석유 {bloc}, 태양광 {solar}, 검증 {verify})"
 
     if not quiet:
         size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
-        extra = ""
-        if semi_built:
-            extra += ", 반도체 지도"
-        if ip_built:
-            extra += ", 미중 산업정책 데이터(리스크 화면용)"
-        if risk_built:
-            extra += ", 지정학적 산업정책 리스크"
-        if bloc_built:
-            extra += ", 지정학적 블록 지도"
-        if solar_built:
-            extra += ", 태양광 무역 탐색기"
-        if verify_built:
-            extra += ", 석유 검증 보고서"
-        print(f"    사이트 생성   리포트 {len(reports)}건{extra}, {size / 1024:,.0f}KB")
+        print(f"    사이트 생성   리포트 {len(reports)}건, 패널1 {risk_built}, 패널2 {ai_built}{extra}, {size / 1024:,.0f}KB")
     return out
 
 

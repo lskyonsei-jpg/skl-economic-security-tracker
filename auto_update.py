@@ -1465,150 +1465,6 @@ def build_change_report(diff: dict, summary: dict, previous: pd.DataFrame,
 # --------------------------------------------------------------- 파일 출력
 
 
-def excel_safe(frame: pd.DataFrame) -> pd.DataFrame:
-    frame = frame.copy()
-    truncated = 0
-    for column in frame.select_dtypes(include=["object", "string"]).columns:
-        series = frame[column]
-        over = series.map(lambda x: isinstance(x, str) and len(x) > XLSX_CELL_LIMIT)
-        truncated += int(over.sum())
-        frame[column] = series.map(
-            lambda x: ILLEGAL_XLSX_CHARS.sub("", x)[:XLSX_CELL_LIMIT] if isinstance(x, str) else x
-        )
-    if truncated:
-        say(f"    주의: 엑셀 셀 한계(32,767자)를 넘어 잘린 값 {truncated:,}개")
-    return frame
-
-
-def prune_outputs(keep: set[Path]) -> None:
-    """최근 KEEP_OUTPUT_DATES개 자료 기준일의 엑셀만 남기고 지운다.
-
-    keep에 든 파일(방금 만든 것)은 무슨 일이 있어도 지우지 않는다.
-    master.parquet이 최신 상태를 들고 있으므로 과거 엑셀은 --rebuild-excel로
-    언제든 다시 만들 수 있다. 다만 그건 '지금 자료'로 다시 만드는 것이라
-    옛 날짜의 스냅숏이 그대로 살아 돌아오지는 않는다. 그래서 3개를 남긴다.
-    """
-    by_date: dict[str, list[Path]] = {}
-    for prefix in OUTPUT_PREFIXES:
-        for path in OUTPUT.glob(f"{prefix}_*.xlsx"):
-            matched = OUTPUT_PATTERN.match(path.name)
-            if matched:
-                by_date.setdefault(matched.group(1), []).append(path)
-    stale = sorted(by_date)[:-KEEP_OUTPUT_DATES]
-    if not stale:
-        return
-    freed = 0
-    removed: list[str] = []
-    for stamp in stale:
-        for path in by_date[stamp]:
-            if path in keep:
-                continue
-            freed += path.stat().st_size
-            path.unlink()
-            removed.append(path.name)
-    if removed:
-        say(f"    오래된 엑셀 {len(removed):,}개 정리 "
-            f"({freed / 1e6:,.0f}MB 확보, 최근 {KEEP_OUTPUT_DATES}개 기준일 유지)")
-        for name in removed:
-            say(f"      지움: {name}")
-
-
-def write_excel(frame: pd.DataFrame, path: Path) -> None:
-    from openpyxl import load_workbook
-
-    excel_safe(frame).to_excel(path, index=False, freeze_panes=(1, 0))
-    workbook = load_workbook(path)
-    sheet = workbook.active
-    sheet.auto_filter.ref = sheet.dimensions
-    sheet.freeze_panes = "A2"
-    workbook.save(path)
-
-
-def write_outputs(current: pd.DataFrame, end: date, args) -> tuple[Path, Path] | None:
-    """분석용·전체 두 엑셀을 만들고 저장 결과를 다시 읽어 대조한다."""
-    analysis = current[ANALYSIS_COLUMNS].copy()
-    full = current.copy()
-    validate(analysis, full)
-
-    stamp = end.strftime("%Y%m%d")
-    analysis_path = OUTPUT / f"{OUTPUT_PREFIX}_{START_YEAR}-{stamp}_analysis.xlsx"
-    full_path = OUTPUT / f"{OUTPUT_PREFIX}_{START_YEAR}-{stamp}_full.xlsx"
-
-    existing = [p.name for p in (analysis_path, full_path) if p.exists()]
-    if existing:
-        say(f"    이미 있는 파일: {', '.join(existing)}")
-        if not args.yes and not ask_yes_no(
-            "    덮어쓸까요? (아니오를 고르면 아무것도 바꾸지 않습니다)", default=False
-        ):
-            say("    취소했습니다. 기존 파일을 그대로 두었습니다.")
-            return None
-
-    write_excel(analysis, analysis_path)
-    say(f"    {analysis_path.name}  ({len(ANALYSIS_COLUMNS)}열)")
-    write_excel(full, full_path)
-    say(f"    {full_path.name}  ({len(COLUMN_ORDER)}열)")
-
-    say()
-    say("5/5  저장 결과 재검증")
-    expected = current["intervention_id"].astype("Int64")
-    for label, path in (("분석용", analysis_path), ("전체", full_path)):
-        check = pd.read_excel(path, usecols=["intervention_id"])
-        if len(check) != len(current):
-            fail(f"저장 후 재검증 실패: {label} 파일의 행 수가 다릅니다.")
-        if not check["intervention_id"].astype("Int64").equals(expected):
-            fail(f"저장 후 재검증 실패: {label} 파일의 intervention_id가 다릅니다.")
-    say("    통과")
-    # 새 파일이 온전하다는 것을 확인한 뒤에 지운다. 순서를 바꾸면 저장이
-    # 실패했을 때 옛 파일까지 잃는다.
-    prune_outputs({analysis_path, full_path})
-    return analysis_path, full_path
-
-
-def rebuild_excel(end_date: str, args) -> int:
-    """API도 BERT도 건드리지 않고, 저장된 master.parquet으로 엑셀만 다시 만든다.
-
-    열 구성을 바꿨을 때 몇 시간짜리 재분류 없이 산출물만 갱신하기 위한 것이다.
-    """
-    current = load_master()
-    if current is None:
-        fail("cache/master.parquet이 없습니다. 먼저 정상 실행을 한 번 해야 합니다.")
-    if list(current.columns) != COLUMN_ORDER:
-        fail(f"master.parquet의 열 구조가 기준({len(COLUMN_ORDER)}개)과 다릅니다.")
-
-    state = load_state() or {}
-    say()
-    say("  저장된 자료로 엑셀만 다시 만듭니다. (API·BERT 실행 없음)")
-    say(f"  자료 기준일   {state.get('data_end_date', end_date)}")
-    say(f"  전체          {len(current):,}건")
-    say()
-    say("1/2  엑셀 2개 생성")
-    result = write_outputs(current, date.fromisoformat(state.get("data_end_date", end_date)), args)
-    if result is None:
-        return NOTHING_WRITTEN
-    analysis_path, full_path = result
-
-    run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    (LOGS / f"run_manifest_{run_stamp}_rebuild.json").write_text(json.dumps({
-        "run_at_utc": datetime.now(timezone.utc).isoformat(),
-        "action": "rebuild_excel_only",
-        "data_end_date": state.get("data_end_date"),
-        "rows": len(current),
-        "columns_analysis": len(ANALYSIS_COLUMNS),
-        "columns_full": len(COLUMN_ORDER),
-        "outputs": {
-            p.name: {"bytes": p.stat().st_size, "sha256": sha256_file(p)}
-            for p in (analysis_path, full_path)
-        },
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
-    state["last_output"] = analysis_path.name
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    say()
-    say("  완료")
-    say(f"  {analysis_path.name}")
-    say(f"  {full_path.name}")
-    say()
-    return 0
 
 
 def sha256_file(path: Path) -> str:
@@ -1617,6 +1473,30 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+# 무인 실행(GitHub Actions)의 멈춤 조건. 걸리면 Failure -> 종료코드 1 이고
+# master.parquet·state.json 을 쓰지 않으므로 Release 의 직전 상태가 그대로 남는다.
+MAX_DROP_PCT = float(os.environ.get("MAX_DROP_PCT", "5"))     # 전체 표본 감소 허용 %
+MAX_REMOVED = int(os.environ.get("MAX_REMOVED", "500"))      # full 모드 삭제 건수 상한
+
+
+def guard(previous: pd.DataFrame | None, current: pd.DataFrame, diff: dict,
+          mode: str, first_run: bool) -> None:
+    gone = check_export_control_types(current)
+    if gone:
+        fail(f"수출통제 유형명 {len(gone)}개가 자료에 0건입니다 (GTA 가 이름을 바꿨을 수 있음): {', '.join(gone)}")
+    if current["intervention_id"].isna().any():
+        fail("intervention_id 결측이 있습니다.")
+    if list(current.columns) != COLUMN_ORDER:
+        fail(f"열 구조가 기준({len(COLUMN_ORDER)}개)과 다릅니다: {len(current.columns)}개")
+    if first_run or previous is None or len(previous) == 0:
+        return
+    drop_pct = (len(previous) - len(current)) / len(previous) * 100
+    if drop_pct > MAX_DROP_PCT:
+        fail(f"전체 표본이 {len(previous):,} -> {len(current):,}건으로 {drop_pct:.1f}% 줄었습니다 (한도 {MAX_DROP_PCT}%).")
+    if mode == "full" and len(diff["removed"]) > MAX_REMOVED:
+        fail(f"삭제 {len(diff['removed']):,}건이 한도 {MAX_REMOVED:,}건을 넘습니다.")
 
 
 def validate(plain: pd.DataFrame, expanded: pd.DataFrame) -> None:
@@ -1685,15 +1565,8 @@ def main() -> int:
         "--mode", choices=["incremental", "full"], default="full",
         help="incremental=빠른 업데이트, full=잠수함 패치 점검 (기본: full)",
     )
-    parser.add_argument(
-        "--rebuild-excel", action="store_true",
-        help="저장된 자료로 엑셀만 다시 만든다 (API·BERT 실행 없음)",
-    )
     parser.add_argument("--yes", action="store_true", help="확인 없이 진행")
     args = parser.parse_args()
-
-    if args.rebuild_excel:
-        return rebuild_excel(args.end_date or date.today().isoformat(), args)
 
     api_key = os.environ.get("GTA_API_KEY", "").strip()
     if not api_key:
@@ -1794,12 +1667,13 @@ def main() -> int:
             return NOTHING_WRITTEN
 
     say()
-    say("4/5  엑셀 2개 생성")
-    result = write_outputs(current, end, args)
-    if result is None:
-        return NOTHING_WRITTEN
-    analysis_path, full_path = result
+    say("4/5  멈춤 조건 검사")
+    guard(previous, current, diff, mode, first_run)
+    validate(current[ANALYSIS_COLUMNS].copy(), current.copy())
+    say("    통과")
 
+    say()
+    say("5/5  저장")
     current.to_parquet(MASTER_PATH, index=False)
     missing_desc = int(current[DESCRIPTION_COLUMN].fillna("").str.strip().eq("").sum())
     # 삭제를 실제로 확인했는지. 증분 모드는 받지 않은 건과 사라진 건을 구분할 수
@@ -1848,10 +1722,7 @@ def main() -> int:
         "model_repo": MODEL_REPO,
         "model_revision": MODEL_REVISION,
         "python": platform.python_version(),
-        "outputs": {
-            p.name: {"bytes": p.stat().st_size, "sha256": sha256_file(p)}
-            for p in (analysis_path, full_path)
-        },
+        "outputs": {"master.parquet": {"bytes": MASTER_PATH.stat().st_size, "sha256": sha256_file(MASTER_PATH)}},
     }
     run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     (LOGS / f"run_manifest_{run_stamp}.json").write_text(
@@ -1870,7 +1741,7 @@ def main() -> int:
         "last_mode": mode,
         # 마지막으로 전체 점검을 한 날. 증분 실행은 이 값을 건드리지 않는다.
         "last_full_rebuild": end_date if mode == "full" else (state or {}).get("last_full_rebuild"),
-        "last_output": analysis_path.name,
+        "last_output": None,  # 2026-10-22 엑셀 생성 중단(CI 전환)
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
     say()
@@ -1899,9 +1770,6 @@ def main() -> int:
             f"· 수정 {len(industrial_policy['changed']):,} "
             f"· 삭제 {ip_removed})")
     say(f"  description 없음  {missing_desc:,}건 ({missing_desc / len(current):.1%})")
-    say()
-    say(f"  {analysis_path.name}")
-    say(f"  {full_path.name}")
     say()
     say(f"  변경 내역   logs/{report_path.name}")
     say()

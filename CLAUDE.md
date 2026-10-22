@@ -4,7 +4,8 @@
 
 ## 지금 진행 중인 작업
 
-- **GitHub Actions 이전.** 목표와 단계는 `문서/20261022_HANDOFF_ClaudeCode.md`를 먼저 읽는다.
+- **GitHub Actions 이전은 2026-10-22 완료.** 운영 구조는 `README.md`, 결정 이력은 `문서/20261022_HANDOFF_ClaudeCode.md` 상단.
+- 사이트는 패널 2개 체제(산업정책 트래커, 한미 AI 협력 트래커). 디자인 규칙은 `문서/20261022_디자인시스템.md`, 토큰은 `assets/site.css`.
 - 설계 배경과 선택지는 `문서/20261022_운영방안_GitHub이전과_패널로드맵.md`.
 - 원격 저장소: `https://github.com/lskyonsei-jpg/skl-economic-security-tracker`. 2026-10-22 연구자 결정: 사이트 공개 전환, GitHub Pages 호스팅, Cloudflare 완전 제거, 보관소는 GitHub Release 자산(R2 안 씀).
 
@@ -19,7 +20,7 @@
 ## 판단권
 
 - 복수의 선택지가 있거나 근거가 부족하면 임의로 고르지 않는다. 쟁점과 선택지를 번호로 정리해 묻고, 답을 받은 뒤 진행한다.
-- HANDOFF의 "결정 대기" 항목은 답을 받기 전에는 착수하지 않는다.
+- 결정이 필요한 항목은 번호로 묻되, 기본값을 함께 제시해 한 번에 답할 수 있게 한다.
 
 ## 문서 작성
 
@@ -36,5 +37,6 @@
 
 ## 실행 환경
 
-- Windows, Python은 `.venv/Scripts/python.exe`. Node·wrangler는 2026-10-22 Cloudflare 제거와 함께 쓰지 않는다.
-- 세부 동작은 `README.md`(2026-08-28 기준, 패널 5개 추가분은 미반영)와 `문서/코드북.md`.
+- 실행은 GitHub Actions(`.github/workflows/pipeline.yml`)가 한다. 로컬 실행 절차·스크립트를 만들지 않는다(연구자 지시 2026-10-22).
+- 로컬 확인은 `.venv/Scripts/python.exe` 로 `publish_site.py` 만. `PYTHONUTF8=1` 필수.
+- 세부 동작은 `README.md`와 `문서/코드북.md`.

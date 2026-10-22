@@ -1,305 +1,60 @@
 # SKL Economic Security Tracker
 
-## 실행
+사이트: https://lskyonsei-jpg.github.io/skl-economic-security-tracker/
+저장소: https://github.com/lskyonsei-jpg/skl-economic-security-tracker
 
-`SKL_Economic_Security_Tracker.cmd`를 더블클릭한다. 실행 주기는 정해져 있지 않다. 매일 돌려도 되고 며칠 건너뛰어도 된다.
+사람이 실행하는 것은 없다. GitHub Actions 가 매일 06:00 KST 에 자료를 받아 분류하고 사이트를 다시 배포한다.
 
-실행하면 이렇게 묻는다.
+## 패널
 
-```
-  지금 갖고 있는 자료
-  ------------------------------------------------------------------
-    기간                2010-01-01 ~ 2026-08-10
-    건수                82,465건
-    마지막 잠수함 점검  2026-08-10 (오늘)
-  ------------------------------------------------------------------
-
-  무엇을 할까요?   번호를 누르고 Enter
-  ------------------------------------------------------------------
-
-   [1]  빠른 업데이트                              약 10분
-        GTA에 "마지막 점검일 이후 손댄 것만" 물어서 그것만 받습니다.
-        받아온 것 안에서는 새 건·수정을 정확히 잡습니다.
-        단, GTA가 내용을 고치고도 손댄 티(last_updated)를 안 낸 건은
-        애초에 받아오지도 못해 통째로 놓칩니다. 삭제도 확인 못 합니다.
-
-   [2]  잠수함 패치 점검                           약 25분
-        필터 없이 전부 다시 받아 [1]이 놓친 것까지 하나씩 대조합니다.
-          - GTA가 손댄 티 없이 조용히 고친 것 (평가등급 재분류 등)
-          - 조용히 지워버린 건
-          - 조치 유형 이름을 통째로 갈아치운 것
-        2010년부터 전부 다시 받아 하나씩 대조합니다.
-        [1] 로는 이런 것이 보이지 않습니다. 대신할 방법이 없습니다.
-
-  BERT 분류는 두 경우 모두 새로 생긴 것만 돌립니다.
-
-  그냥 Enter 를 누르면 [1] 로 진행합니다.
-
-  선택 :
-```
-
-이어서 종료일을 묻는다. 그냥 Enter를 누르면 오늘까지 받는다. 마지막 업데이트 날짜는 프로그램이 관리하는 고정값이다.
-
-잠수함 패치 점검을 한 지 **7일**이 넘으면 노란색 경고가 뜨고 기본값이 `[2]`로 바뀐다. 이 값은 `run_update.ps1`의 `$FullCheckDays`로 바꾼다.
-
-**두 모드는 대조 로직(어떤 열을 비교하는지)이 완전히 같다.** 다른 건 "GTA에 뭘 물어서 받아오는가"뿐이다. BERT는 어느 쪽이든 새로 생긴 것만 돌린다.
-
-| | 빠른 업데이트 | 잠수함 패치 점검 |
+| 패널 | 자료 | 빌더 |
 |---|---|---|
-| GTA에 묻는 방식 | `last_updated`가 마지막 점검일 이후(포함)인 것만 | 필터 없이 전량 |
-| 받는 범위 | 그 필터에 걸린 것만 | 2010년부터 전량 |
-| 새로 들어온 건 | 잡음 | 잡음 |
-| **기존 건의 수정** | **받아온 것 안에서만 잡음 — 2026-08-27 실측 4%(15/386건)** | **거의 다 잡음 — 같은 실측 96%(371/386건)** |
-| 삭제 | 확인 안 함 | 잡음 |
-| 수집 시간 | 약 1분 | 약 12분 |
+| 1. Distortive Industrial Policy Tracker | GTA(매일 API) × BSV ideal point × IMF DOTS·WDI(`reference/` 사본) | `industrial_policy_site.py` → `ip_risk_site.py` + `ip_risk_template.html` |
+| 2. 한미 AI 협력 트래커 | Notion DB(야간 1회 읽기) | `ai_coop_site.py` |
 
-**"수정을 잡는다"는 두 모드 다 맞는 말이지만, 잡는 범위가 다르다.** 대조 코드 자체는 두 모드가 똑같이 돈다. 문제는 [1]이 GTA에 "최근 것만 주세요"라고 물어서 **비교 대상 자체가 필터링된 채로 들어온다**는 것이다. GTA는 조치 내용을 고치면서도 `last_updated`를 항상 갱신하지는 않는다(코드북 D-1-a) — 그래서 [1]은 GTA가 실제로 고친 것 중 극히 일부만 받아보고, 나머지는 "받아본 적 자체가 없어서" 비교할 방법이 없다. 2026-08-27 실측: 실제 수정 386건 중 [1]이 받아볼 수 있었던 건 15건(4%)뿐이었다.
+반도체 지도·석유·태양광·석유 검증 화면은 코드만 남아 있다(`SITE_EXTRA_PANELS=1` 로 빌드하면 생성). 석유·태양광은 Comtrade 원자료가 있어야 한다.
 
-**늦게 등재된 과거 건도 빠른 업데이트로 잡힌다.** GTA가 오래된 조치를 새로 등록할 때 수정일을 발표일이 아니라 등록한 날로 찍기 때문이다. 2026-08-11 실행에서 2025-12-29·2026-04-21 발표건이 실제로 잡혔다.
+## 파이프라인 (`.github/workflows/pipeline.yml`)
 
-등재일(`date_published`) 기준으로는 못 거른다 — 최근 두 달치 자료에 이 값이 아예 비어 있다(코드북 참조). 그래서 수정일 하나만 쓴다.
+1. Release `state` 자산 내려받기 — `master.parquet`(GTA 전량 + BERT 라벨), `prediction_cache.json`, `state.json`, `logs.tar.gz`(변경 리포트), 있으면 `comtrade.tar.gz`·`ai_coop.json`
+2. `auto_update.py --mode incremental|full --yes` — GTA API 수집, BERT 분류(새 건만), 직전 스냅숏과 대조, 변경 리포트. 일요일은 full(전량 재대조, 삭제 확인)
+   - 멈춤 조건(`guard()`): 수출통제 9종 유형명 0건, `intervention_id` 결측, 열 수 불일치, 표본 5% 초과 감소, full 삭제 500건 초과 → 실패, Release 는 그대로
+3. 매월 4일: `collect_comtrade.py`(키 있을 때)
+4. `ai_coop_site.py fetch`(Notion 비밀값 있을 때)
+5. 바뀐 자산만 Release `state` 에 다시 올림
+6. `publish_site.py` → `site/` → GitHub Pages
 
-빠른 업데이트가 못 잡는 것은 **GTA가 말없이 바꿔놓은 것**이다. 그래서 [2]를 "잠수함 패치 점검"이라 부른다.
+코드만 push 하면 자료 갱신 없이 빌드·배포만 한다. 수동 실행(Actions → pipeline → Run workflow)에서 모드와 Comtrade 수집 여부를 고른다.
 
-- **조용히 지워버린 건**: 없어진 걸 받아올 방법이 없다. 전량을 받아 "어제 있던 게 오늘 없네"로만 알 수 있다.
-- **조치 유형 이름을 통째로 갈아치운 것**: 2026-08-11에 실제로 있었다(`Import price benchmark` → `Minimum import price (tariff-based)`). 빠른 업데이트는 GTA가 손댄 건만 받으므로 자료에 옛 이름과 새 이름이 섞인다. 전량을 다시 받아야 갈아치운 사실이 드러난다.
+## 비밀값 (Settings → Secrets and variables → Actions)
 
-**일주일에 한 번**을 권한다. 이 주기가 곧 "삭제나 유형 이름 변경을 모르고 지나갈 수 있는 최대 기간"이다. 매일 [1]로 돌리면 그 사이의 잠수함 패치는 보이지 않는다. (2026-08-13에 28일에서 7일로 줄였다 — 사실상 매일 실행 체제로 바뀌었기 때문이다.)
-
-**[2]는 대체 불가능하다 — GTA API에 이걸 대신할 방법이 없다.** 2026-08-27 잠수함 패치 점검이 잡은 수정 386건 중 371건(96%)은 `last_updated`가 아예 안 바뀐 채 GTA가 값만 고친 것들이었다(`gta_evaluation` 재평가가 최다, 150건). GTA가 공식으로 권장하는 delta-sync용 `ticker` 엔드포인트도 직접 호출해서 검증했는데 이 371건과 겹치는 게 **0건**이었다 — ticker는 `intervention_description` 개정 이력만 추적하지, `gta_evaluation`·`is_in_force`·`date_removed` 같은 필드를 애널리스트가 백엔드에서 고치는 건 이벤트로 안 남긴다. 그러니까 "[1]로만 돌리고 [2]는 나중에"라는 선택지는 없다 — [2]를 거르면 그 사이 생긴 이런 종류의 변경은 **영구히 모르고 지나간다.** 자세한 실측은 코드북 D-1-a·D-1-b 참조.
-
-## 검증 절차
-
-자료를 받은 뒤 직전 결과와 대조해서 이렇게 보여준다.
-
-```
-  새로 들어온 것    316건   (직전 자료에 없던 건)
-  수정              47건   (발표일 전 구간, 포함)
-  삭제               1건   (GTA에서 사라짐)
-
-  ── 발표 후 며칠 만에 들어왔나 (우리가 처음 본 날 기준) ──
-    30일 이내       304건
-    30일~1년         11건
-    1년 이상          1건   ← 오래 묵은 건. 확인해볼 것
-    발표일 없음        0건   ← 경과일을 잴 수 없음
-
-  ── 수정 47건의 내역 ──
-    BERT 라벨 바뀜        6건
-    라벨은 그대로        41건
-```
-
-- **새로 들어온 것**: 직전 자료에 없던 건 전부. 발표 후 얼마나 지나서 들어왔는지는 위 표로만 보여주고, 경보는 `1년 이상`에만 붙인다.
-- **경과일 기준**: 엄밀히는 GTA 등재일이 아니라 **우리가 처음 본 날**이다. GTA가 최근 자료에 등재일(`date_published`)을 채워주지 않아 그것으로는 잴 수 없다. 매일 받으면 둘이 거의 같지만, 인용할 때는 밝혀야 한다.
-- **발표일 없음**: 발표일이 비어 있어 경과일을 못 재는 건. 예전에는 이런 건이 조용히 "신규"로 들어갔다.
-- **수정**: 내용이 바뀐 건. 수정됐어도 BERT 라벨은 그대로일 수 있어서 나눠서 센다.
-- `last_updated`·`last_edited`·`latest_action_date`만 바뀐 건은 수정으로 세지 않는다. 내용 변화가 없는데도 매번 수백 건이 잡혀 리포트가 무의미해지기 때문이다.
-
-> **2026-08-13에 '신규 / 지연 등재' 구분을 없앴다.** 발표일이 직전 기준일보다 뒤면 '신규', 앞이면 '지연 등재'로 나눴는데, GTA는 발표 2~4주 뒤에 올리고 이제 매일 받으므로 **'신규'가 구조적으로 항상 0**이었다(실측: 08-12 0/41, 08-13 0/47). 게다가 `30일~1년` 칸에 매일 수십 건이 쌓여 "확인해볼 것" 경보가 매일 울렸는데, 들여다보면 GTA가 인도 지방조달 건을 몰아서 늦게 올린 정상 처리였다.
-
-### 수출통제 조치는 따로 한 번 더 본다
-
-전체 변경 내역을 보여준 다음, **수출통제 조치만 따로 묶어 두 번째 화면**으로 넘어간다. 한 화면에 다 쏟지 않는다.
-
-```
-------------------------------------------------------------------
-  이 중 수출통제 조치(MAST P장 9종)가 8건 있습니다.
-------------------------------------------------------------------
-  수출통제 변경 내역을 자세히 볼까요? [Y/n] y
-
-==================================================================
-  수출통제 조치 변경 내역
-==================================================================
-  새로 들어온 것 2건 · 수정 4건 · 삭제 2건
-
-  ── 수정 4건 ──
-       14019  Export ban                       발표 2010-02-01
-              Argentina                Argentina: media denounces de facto ...
-              바뀐 항목: gta_evaluation, date_removed
-```
-
-- 변경분이 없으면 `수출통제 조치 변경 없음` 한 줄만 뜨고 넘어간다. 묻지 않는다.
-- 수정 건에는 **BERT 라벨이 바뀌었는지**와 **어떤 항목이 바뀌었는지**가 같이 붙는다.
-- `logs/change_report_*.md` 에도 같은 내용이 표로 들어간다.
-
-**수출통제 = MAST P장 정식 유형 9종**이다. 생존분석(`260804 미중 수출통제 수명`)의 씨앗 유형과 같은 목록이라, 그 연구의 표본이 이번 주에 움직였는지 바로 알 수 있다.
-
-```
-Export ban · Export licensing requirement · Export-related non-tariff measure, nes
-Export quota · Export tax · Export tariff quota · Export price benchmark
-Foreign customer limit · Local supply requirement for exports
-```
-
-**이 이름 중 하나라도 자료에서 0건이 되면 큰 경고가 뜬다.** GTA가 유형 이름을 공지 없이 바꾼 전례가 있고(2026-08-11에 실제 발생), 그러면 표본이 오류 없이 조용히 작아진다.
-
-여기서 진행 여부를 묻고, 승인해야 엑셀을 만든다. 바뀐 게 없으면 파일을 만들지 않고 끝낸다.
-
-### 변경 내역은 파일로도 남는다
-
-화면 내용은 스크롤로 사라지므로, 매 실행마다 `logs/change_report_YYYYMMDD_HHMMSS.md`에 자동 저장된다. 별도로 할 일은 없다.
-
-여기에는 화면보다 자세히 들어간다.
-
-- 새로 들어온 건·삭제 건의 **전체 목록**
-- BERT 라벨이 바뀐 건의 **이전 → 이후**
-- 수정된 항목별 건수 (`gta_evaluation` 6건, `eligible_firm` 6건 …)
-
-리포트의 **모든 표는 같은 여섯 열로 시작**한다. 표마다 필요한 열(바뀐 항목 등)은 그 뒤에 붙는다.
-
-`intervention_id`와 경과일은 표에 넣지 않는다. ID 전량은 `logs/run_manifest_*.json`의 `changes/*_ids`에 남으므로 개별 건 추적은 그쪽으로 한다.
-
-| 열 | 원본 | 뜻 |
+| 이름 | 용도 | 없으면 |
 |---|---|---|
-| 발표일 | `date_announced` | 조치를 발표한 날. 등재일이 아니다 |
-| 시행 관할 | `implementing_jurisdictions` | 조치를 시행하는 나라·지방정부 |
-| 제목 | `state_act_title` | |
-| 유형 | `intervention_type` | GTA 조치 유형 이름 |
-| GTA 평가 | `gta_evaluation` | Red·Amber = 외국 상업이익에 해로움, Green·Liberalising = 비차별적 자유화. 환경 분류가 아니다 |
-| 산업정책 분류 | `D_IP_bert_3` 등 3열 | 한 칸으로 접어 텍스트로 쓴다 — 산업정책 / 산업정책 아님 / 목적 불명확 / 미분류 |
+| `GTA_API_KEY` | GTA 수집 | 파이프라인 실패 |
+| `NOTION_TOKEN`, `NOTION_DB_ID` | 패널 2 | 패널 2 가 "연결 전" 화면 |
+| `COMTRADE_API_KEY` | 석유·태양광 원자료(현재 미사용 패널) | 수집 건너뜀 |
 
-`목적 불명확`은 **설명문이 부실하다는 뜻이 아니다.** 문서에 정책 목적을 서술한 문장이 없어 산업정책 의도를 판정할 근거가 없다는 뜻이다. 세율·기준가를 주기적으로 조정하는 반복 고시가 여기 몰린다.
+Notion: 통합(integration)을 만들어 DB 페이지에 연결(Share → Connections)한 뒤 토큰과 DB ID 를 넣는다. 열 이름이 바뀌면 `ai_coop_site.py` 의 `PROPERTY_ALIASES` 를 고친다.
 
-`미분류`는 설명문이 아예 없어 BERT를 돌리지 않은 건이다. 라벨 3열이 전부 결측인 것과 같다.
+## 상태 보관
 
-"지난달에 뭐가 바뀌었더라"를 나중에 확인할 수 있고, 자료 개정 이력을 논문 각주에 쓸 때도 쓴다. 목록이 아주 길면 항목별 500건까지만 적는다.
+무거운 파일은 git 에 넣지 않는다. Release `state` 가 유일한 상태 저장소이고 워크플로가 매 실행 뒤 덮어쓴다. 사라지면 BERT 재분류에 약 4시간이 든다.
 
-## 출력
+## 디자인
 
-`output` 폴더에 자료 기준일을 붙인 엑셀 2개가 생긴다. 기존 날짜 파일은 덮어쓰지 않는다.
+`assets/site.css` 하나가 토큰과 구성요소를 정한다. 규칙은 `문서/20261022_디자인시스템.md`.
 
-| 파일 | 열 | 용량 | 용도 |
-|---|---:|---:|---|
-| `SKL_Economic_Security_2010-YYYYMMDD_analysis.xlsx` | 22 | 약 13MB | 통계분석용 |
-| `SKL_Economic_Security_2010-YYYYMMDD_full.xlsx` | 34 | 약 59MB | 원문 확인·재현·감사용 |
+## 데이터 해석
 
-2026-08-15 이전 산출물은 `SKL_Export_Control_2010-*.xlsx`, 2026-08-13 이전은 `JLOP_BERT_2010-*.xlsx` 이름이다. 정리 규칙은 세 이름을 모두 알아보므로 옛 파일도 최근 3개 기준일 규칙에 따라 함께 정리된다.
+- `D_IP_bert_3 == 1` 은 산업정책 후보군이다. 확정 라벨이 아니다.
+- GTA Red/Amber 는 외국 상업이익에 해로운 조치, Green 은 비차별적 자유화. 환경 분류가 아니다.
+- `Affected Jurisdiction` 은 수혜국이 아니라 상업적 이해가 영향받는 국가다.
+- 분석 단위는 intervention. 열 정의와 GTA 가 공지 없이 바꾸는 것들은 `문서/코드북.md`.
 
-열별 정의, 해석상 주의, GTA가 공지 없이 바꿀 수 있는 것들의 목록은 [코드북.md](문서/코드북.md)에 있다.
-
-같은 날짜 파일이 이미 있으면 덮어쓸지 먼저 묻는다.
-
-## 변경 내역 사이트
-
-변경 내역을 밖에서도 볼 수 있게 웹으로 올린다. 업데이트가 정상으로 끝나면 자동으로 갱신된다. 따로 할 일은 없다.
+## 로컬에서 확인하고 싶을 때(선택)
 
 ```
-주소     https://skl-export-control-tracker.pages.dev
-아이디   skl (또는 사이트_설정.cmd [3] 으로 발급받은 개인 아이디)
-비밀번호 사이트_설정.cmd 의 [2] 로 정한 것 (개인 계정은 [3] 에서 발급 시 정한 것)
+python -m venv .venv && .venv/Scripts/pip install -r requirements-site.txt
+gh release download state -D cache   # master.parquet, logs.tar.gz(→ logs/) 등
+PYTHONUTF8=1 python publish_site.py   # site/ 생성
 ```
-
-주소는 옛 이름(`skl-export-control-tracker`) 그대로다. Cloudflare Pages는 프로젝트 이름을 나중에 못 바꾸고, 바꾸려면 새 프로젝트를 만들어야 해서 URL이 깨진다. 화면에 보이는 이름만 SKL Economic Security Tracker로 바뀌었다.
-
-비용은 0원이다. Cloudflare Pages 무료 등급을 쓴다.
-
-**엑셀은 올리지 않는다.** 전체판이 59MB라 밖에서 열 일도 없고 무료 한도만 먹는다. 사이트에 올라가는 것은 `logs/change_report_*.md` 뿐이고 전체가 40KB 남짓이다.
-
-### 구성
-
-| 파일 | 하는 일 |
-|---|---|
-| `publish_site.py` | 리포트를 읽어 `site/`에 HTML을 쓴다. 비밀값을 다루지 않는다 |
-| `functions/_middleware.js` | 사이트 앞단. 비밀번호를 통과 못 하면 아무것도 안 내보낸다. `publish_site.py`가 만든다 |
-| `deploy_site.ps1` | `site/`를 Cloudflare에 올리고, 정말 잠겼는지 확인한다 |
-| `사이트_설정.cmd` / `site_setup.ps1` | 최초 설정. [1] Cloudflare 토큰, [2] 사이트 비밀번호 |
-| `site_config.json` | 계정 ID·프로젝트 이름. 비밀값 아님 |
-| `.cf_api_token.xml` | Cloudflare 토큰. 이 PC의 이 Windows 계정만 복호화 가능 |
-
-`site_config.json`이 없으면 사이트 갱신 단계를 통째로 건너뛴다. 사이트가 필요 없으면 이 파일만 치우면 된다.
-
-### 손댈 때 반드시 알아야 할 것
-
-**`functions` 폴더는 `site` 폴더 바깥에 있어야 한다.** wrangler는 "올리는 폴더" 안이 아니라 `--cwd`로 지정한 위치의 `functions/`를 찾는다. `site/functions/`에 두면 **오류 없이 조용히 무시되고**, 인증이 통째로 빠진 채 사이트가 전체공개로 올라간다. 2026-08-13에 실제로 그렇게 새어나갔다.
-
-올바르게 들어갔으면 업로드 로그에 이 두 줄이 뜬다. 안 뜨면 인증이 빠진 것이다.
-
-```
-✨ Compiled Worker successfully
-✨ Uploading Functions bundle
-```
-
-`deploy_site.ps1`이 두 겹으로 막는다 — 올리기 전에 `functions/_middleware.js`가 있는지 보고, 올린 뒤에는 인증 없이 실제로 접속해서 401·503이 아니면 빨간 경고와 함께 실패 처리한다.
-
-**배포 주소는 지워도 캐시에 남는다.** 배포할 때마다 `<8자리>.skl-export-control-tracker.pages.dev`가 생기고 이건 오래 살아남는다. 실수로 공개 상태로 올렸다면 배포를 지우는 것만으로는 부족하고, 프로젝트를 지웠다 다시 만드는 것이 확실하다.
-
-### 비밀번호를 바꾸려면
-
-`사이트_설정.cmd`를 실행해 `[2]`를 고르면 된다.
-
-**Cloudflare Pages는 배포 시점에 환경변수를 묶는다.** 비밀번호만 바꾸고 다시 올리지 않으면 이미 올라가 있는 사이트에는 옛 비밀번호가 계속 걸려 있다. 그래서 이 스크립트가 저장 후 자동으로 다시 올린다.
-
-비밀번호 값은 Cloudflare API로 직접 넣는다. 예전에는 `$Plain | wrangler pages secret put ...` 처럼 파이프로 넘겼는데, **PowerShell이 값 끝에 줄바꿈을 붙여** 저장돼 비밀번호가 영영 안 맞았다(2026-08-13). 파이프를 쓰지 말 것. 미들웨어에도 `trim()`을 넣어 한 번 더 막아뒀다.
-
-## 엑셀만 다시 만들기
-
-열 구성을 바꿨을 때 몇 시간짜리 재분류 없이 산출물만 갱신할 수 있다. 저장된 `cache/master.parquet`으로 엑셀만 새로 쓴다. API도 BERT도 돌지 않는다.
-
-```bash
-.venv/Scripts/python.exe auto_update.py --rebuild-excel --yes
-```
-
-## 열 구성
-
-전체판은 GTA API가 주는 29개(`InterventionFullListPublicSerializerV2`)를 이름 그대로 쓰고, BERT 결과 5개를 더한 34열이다. 분석용은 여기서 11개를 뺀 23열이다.
-
-**분석용에서 빼는 12개** — 전부 전체판에 남아 있어 `intervention_id`로 되붙일 수 있다.
-
-```
-intervention_description   state_act_source      affected_products
-state_act_url              intervention_url      mast_subchapter
-latest_action_name         last_edited           latest_action_date
-inferred_jurisdictions     bert_max_probability  bert_was_truncated
-```
-
-뺀 이유는 [코드북.md](문서/코드북.md)에 열별로 적어두었다.
-
-- `bert_max_probability`: 분류 확신도. 0.35로 간신히 뽑힌 라벨과 0.99짜리를 구분할 수 있다.
-- `bert_was_truncated`: 원문이 512토큰을 넘어 잘렸는지. 참이면 라벨을 조심해서 읽어야 한다.
-- 객체 배열 필드(`affected_products` 등)는 대표 키만 뽑아 문자열로 잇는다. 관세율 전후(`prior_level`/`new_level`)는 넣지 않았다. 필요하면 별도 파일로 뽑는 게 낫다.
-
-## 처리 기준
-
-- 분석 단위: GTA intervention
-- API 필터: `announcement_period = 2010-01-01 ~ 지정한 종료일`
-- 잠수함 패치 점검에서는 매번 전량을 다시 받는다. 그래야 삭제와, 수정일이 갱신되지 않은 채 뒤늦게 올라온 건까지 잡힌다. 수집은 12분 안쪽이다.
-- BERT 입력: 영어 `intervention_description`의 조각을 `order_nr` 순으로 이어 붙인 전문
-- 모델: `industrialpolicygroup/industrialpolicy-classifier`
-- 고정 revision: `2cc47b0c3a1224bd949b6154bb0fd966a864d4df`
-- description의 SHA-256이 같으면 저장된 결과를 재사용한다. 그래서 실제 분류는 신규·변경분만 돌아간다.
-- description이 비어 있으면 라벨을 임의로 부여하지 않고 5개 열을 결측으로 둔다.
-
-## 자동 검증
-
-- API 필수 필드 존재, `intervention_id` 결측·중복
-- 두 파일의 열 개수·이름·순서(22 / 34)
-- 두 파일의 행 수와 `intervention_id` 순서 일치
-- BERT 라벨 one-hot 구조, description 없는 행에 라벨이 붙지 않았는지
-- 저장한 엑셀을 다시 읽어 메모리상 결과와 행 수·ID 대조
-- 실행마다 `logs`에 두 파일을 남긴다 — `run_manifest_*.json`(표본 수, 결측 비율, 변화 건수, 모델 revision, 파일 SHA-256)과 `change_report_*.md`(변경 내역 상세)
-
-## 최초 실행
-
-첫 실행은 2010년부터 전량을 새로 분류하므로 **여러 시간 걸린다**. 2026-08-10 실측으로 82,465건 수집에 16분, 80,576건 분류에 3시간 40분(약 6.1건/초, GPU 없음)이 걸렸다. 밤에 돌리는 편이 낫다. 이후 실행은 신규·변경분만 돌아가 몇 분이면 끝난다.
-
-최초 1회에만 실행 환경 설치와 GTA Full Access API key 입력이 필요하다. key는 Windows DPAPI로 암호화되어 현재 Windows 사용자만 복호화할 수 있다.
-
-사이트까지 쓰려면 `사이트_설정.cmd`를 두 번 실행한다. 둘 다 최초 1회다.
-
-1. `[1] Cloudflare 토큰` — 권한은 `Account / Cloudflare Pages / Edit` 하나면 된다. 저장 전에 진짜 되는 토큰인지 확인한다
-2. `[2] 사이트 비밀번호` — 아이디는 `skl` 고정
-
-## 관리
-
-- API key를 바꾸려면 `.gta_api_key.xml`을 지우고 다시 실행한다.
-- Cloudflare 토큰을 바꾸려면 `사이트_설정.cmd`의 `[1]`을 다시 실행한다.
-- `cache`는 지우지 않는다. 지우면 다음 실행이 최초 구축이 되어 다시 여러 시간 걸린다.
-  - `cache/state.json`: 마지막 업데이트 날짜
-  - `cache/master.parquet`: 변화 대조용 직전 스냅숏
-  - `cache/prediction_cache.json`: description별 BERT 결과
-  - `cache/api_pages/`: API 원응답
-- **BERT 모델을 바꾸면 `cache/prediction_cache.json`을 지우고 돌린다.** 저장된 결과는 description 내용만으로 찾으므로, 모델을 바꿔도 프로그램이 옛 판정을 그대로 재사용한다. 화면에는 "캐시 재사용"이라고만 떠서 알아채기 어렵다. (모델은 `MODEL_REVISION`에 고정돼 있어 저쪽에서 갱신해도 저절로 바뀌지는 않는다.)
-- **`output`은 최근 3개 자료 기준일만 남기고 자동으로 지운다.** 한 번 실행에 두 파일 약 72MB가 쌓이는데, 이 폴더는 OneDrive라 그대로 두면 매일 실행 시 한 달에 2.2GB가 올라간다. 새 파일의 저장 검증이 끝난 뒤에만 지우며, 지운 파일 이름은 화면에 찍힌다. 남기는 개수는 `KEEP_OUTPUT_DATES`로 바꾼다.
-
-## 알아둘 것
-
-- 전 구간이 최신 GTA로 갱신되므로 지난달 파일과 이번달 파일의 2015년 자료가 다를 수 있다. 논문에 쓸 때는 자료 기준일을 명시한다. 변동폭 실측치는 코드북에 있다.
-- 2010–2022 구간도 이 프로그램이 직접 BERT로 분류한다. 기존 JLOP 공개자료의 라벨과는 다를 수 있다. 대조가 필요하면 `../원자료/260718_BERT_Expansion/`의 원본 엑셀을 쓰면 된다.

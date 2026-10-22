@@ -1,0 +1,183 @@
+# 전체 파이프라인 — 사람이 아무것도 실행하지 않는다.
+#
+#   Release "state" 내려받기 -> GTA 갱신(auto_update.py) -> (월 1회) Comtrade 수집
+#   -> (설정 시) Notion 한미 AI 협력 DB 읽기 -> Release "state" 올리기 -> 사이트 빌드 -> GitHub Pages 배포
+#
+# 일정(UTC 21:00 = 한국 06:00)
+#   매일: incremental.  일요일: full(전량 재대조).  매월 4일: Comtrade 도 수집.
+# 비밀값(Settings > Secrets and variables > Actions)
+#   GTA_API_KEY(필수), COMTRADE_API_KEY(없으면 수집 건너뜀), NOTION_TOKEN·NOTION_DB_ID(없으면 패널 2 자료 갱신 건너뜀)
+# 멈춤 조건은 auto_update.py 의 guard() 가 판정한다. 걸리면 Release 를 건드리지 않고 실패한다.
+# 코드만 바뀐 push 는 자료 갱신 없이 빌드·배포만 한다.
+name: pipeline
+
+on:
+  schedule:
+    - cron: "0 21 * * *"
+  push:
+    branches: [main]
+    paths-ignore: ["문서/**", "README.md", "CLAUDE.md"]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "GTA 갱신 모드 (skip = 자료 갱신 없이 빌드·배포만)"
+        type: choice
+        options: [incremental, full, skip]
+        default: incremental
+      comtrade:
+        description: "Comtrade 수집 실행"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+env:
+  MODEL_REVISION: 2cc47b0c3a1224bd949b6154bb0fd966a864d4df   # auto_update.py 와 같아야 한다
+  PYTHONUTF8: "1"
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 실행 계획
+        id: plan
+        run: |
+          DOW=$(date -u +%u)   # 1=월 ... 7=일
+          DOM=$(date -u +%d)
+          case "${{ github.event_name }}" in
+            schedule)
+              if [ "$DOW" = "7" ]; then MODE=full; else MODE=incremental; fi
+              if [ "$DOM" = "04" ]; then COMTRADE=true; else COMTRADE=false; fi ;;
+            workflow_dispatch)
+              MODE="${{ github.event.inputs.mode }}"; COMTRADE="${{ github.event.inputs.comtrade }}" ;;
+            *)
+              MODE=skip; COMTRADE=false ;;
+          esac
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "comtrade=$COMTRADE" >> "$GITHUB_OUTPUT"
+          echo "GTA 모드: $MODE / Comtrade: $COMTRADE"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 의존성 설치
+        run: |
+          if [ "${{ steps.plan.outputs.mode }}" != "skip" ]; then
+            pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+            pip install -r requirements.txt
+          else
+            pip install -r requirements-site.txt requests==2.32.4
+          fi
+
+      - name: HF 모델 캐시
+        if: steps.plan.outputs.mode != 'skip'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ env.MODEL_REVISION }}
+
+      - name: Release "state" 내려받기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p cache logs data _state
+          gh release download state -R "$GITHUB_REPOSITORY" -D _state
+          for f in master.parquet prediction_cache.json state.json; do [ -f "_state/$f" ] && mv "_state/$f" cache/; done
+          [ -f _state/logs.tar.gz ] && tar -xzf _state/logs.tar.gz -C logs
+          for a in comtrade gta_threads; do
+            if [ -f "_state/$a.tar.gz" ]; then mkdir -p "data/$a" && tar -xzf "_state/$a.tar.gz" -C "data/$a"; fi
+          done
+          [ -f _state/ai_coop.json ] && cp _state/ai_coop.json data/ai_coop.json
+          ls -la cache data; echo "리포트 $(ls logs | wc -l)개"
+
+      - name: GTA 갱신
+        id: gta
+        if: steps.plan.outputs.mode != 'skip'
+        env:
+          GTA_API_KEY: ${{ secrets.GTA_API_KEY }}
+        run: |
+          set +e
+          python auto_update.py --mode ${{ steps.plan.outputs.mode }} --yes
+          RC=$?
+          set -e
+          if [ "$RC" = "3" ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; echo "변경 없음";
+          elif [ "$RC" = "0" ]; then echo "changed=true" >> "$GITHUB_OUTPUT";
+          else echo "auto_update.py 종료코드 $RC"; exit $RC; fi
+
+      - name: Comtrade 수집
+        id: comtrade
+        if: steps.plan.outputs.comtrade == 'true'
+        env:
+          COMTRADE_API_KEY: ${{ secrets.COMTRADE_API_KEY }}
+        run: |
+          if [ -z "$COMTRADE_API_KEY" ]; then echo "COMTRADE_API_KEY 없음 — 건너뜀"; exit 0; fi
+          python collect_comtrade.py && echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Notion 한미 AI 협력 DB 읽기
+        id: notion
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
+        run: |
+          if [ -z "$NOTION_TOKEN" ] || [ -z "$NOTION_DB_ID" ]; then echo "NOTION_TOKEN/NOTION_DB_ID 없음 — 건너뜀"; exit 0; fi
+          python ai_coop_site.py fetch && echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Release "state" 올리기
+        if: steps.gta.outputs.changed == 'true' || steps.comtrade.outputs.changed == 'true' || steps.notion.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          UP=""
+          if [ "${{ steps.gta.outputs.changed }}" = "true" ]; then
+            tar -czf logs.tar.gz -C logs .
+            UP="$UP cache/master.parquet cache/prediction_cache.json cache/state.json logs.tar.gz"
+          fi
+          if [ "${{ steps.comtrade.outputs.changed }}" = "true" ]; then
+            tar -czf comtrade.tar.gz -C data/comtrade . && UP="$UP comtrade.tar.gz"
+          fi
+          if [ "${{ steps.notion.outputs.changed }}" = "true" ]; then UP="$UP data/ai_coop.json"; fi
+          gh release upload state $UP -R "$GITHUB_REPOSITORY" --clobber
+          echo "올림: $UP"
+
+      - name: 사이트 빌드
+        env:
+          GIT_SHA: ${{ github.sha }}
+        run: python publish_site.py
+
+      - name: 요약
+        run: |
+          {
+            echo "## pipeline"
+            echo
+            echo "- GTA 모드: ${{ steps.plan.outputs.mode }} / 변경: ${{ steps.gta.outputs.changed || 'n/a' }}"
+            echo "- Comtrade: ${{ steps.comtrade.outputs.changed || '건너뜀' }} / Notion: ${{ steps.notion.outputs.changed || '건너뜀' }}"
+            echo "- state.json: $(tr -d '\n' < cache/state.json | cut -c1-200)"
+            echo "- site: $(find site -type f | wc -l)개 파일, $(du -sh site | cut -f1)"
+            R=$(ls logs/change_report_*.md 2>/dev/null | tail -1)
+            if [ -n "$R" ] && [ "${{ steps.gta.outputs.changed }}" = "true" ]; then
+              echo; echo "<details><summary>변경 리포트 앞부분</summary>"; echo; head -80 "$R"; echo; echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

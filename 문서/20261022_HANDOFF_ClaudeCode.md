@@ -14,6 +14,7 @@
 - GTA·Comtrade 원자료는 CI에서 API로 재수집. 재계산 불가한 BERT 예측 캐시와 직전 `master.parquet`만 Release에 보관.
 - 진행: 1단계 완료, 2단계 완료, Cloudflare 제거 + Pages 워크플로(`.github/workflows/deploy-pages.yml`) 작성, 저장소 공개 전환·Pages 활성화(연구자 승인, API), 첫 배포 성공(모두 2026-10-22). 사이트: https://lskyonsei-jpg.github.io/skl-economic-security-tracker/ . 파이프라인 상태 보관소: Release 태그 `state`(master.parquet, prediction_cache.json, state.json, logs.tar.gz). 다음은 3단계.
 - 미답: 결정 2(Comtrade 키), 3(임계치, 기본값 5%·500건), 4(oil_verify 노출, 코드상 index에 이미 링크됨), 5(볼트 정리, 연구자 몫).
+- 2026-10-22 추가 결정: 로컬 실행 경로(.cmd/.ps1/scripts) 폐기, 엑셀 생성 중단, 워크플로 1개(`pipeline.yml`)로 통합. 사이트는 패널 2개(산업정책 트래커·한미 AI 협력 트래커)로 전면 재설계, 디자인 참조 aim-intelligence.com. 아래 "작업 순서" 3~6단계는 이 결정으로 대체됐다.
 
 ## 최종 목표 (한 문장)
 
