@@ -336,7 +336,6 @@ def render_index(reports: list[Report]) -> str:
     meta_html = "".join(f"<div>{html.escape(k)}<b>{html.escape(str(v))}</b></div>" for k, v in meta)
     hero = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Research Dashboard</span>'
             f'<h1>{html.escape(SITE_TITLE)}</h1>'
-            f'<p>GTA 개입 조치를 매일 수집해 BERT로 산업정책 후보를 가려내고, 지정학적 거리와 교차해 봅니다. 두 번째 패널은 한미 AI 협력 사건을 추적합니다.</p>'
             f'<div class="meta">{meta_html}</div></div></header>')
     pending = ai_coop_site.pending_proposals()
     banner = ""
@@ -347,10 +346,8 @@ def render_index(reports: list[Report]) -> str:
                   f'<span class="go">열기 →</span></a></div></section>')
     cards = ('<section class="section"><div class="wrap"><span class="eyebrow">Panels</span><div class="grid grid-2">'
              '<a class="panel-card" href="ip_risk.html"><span class="eyebrow">Panel 1</span><h2>Distortive Industrial Policy Tracker</h2>'
-             '<p>GTA Red·Amber 산업정책 조치의 피영향국 노출 × BSV 지정학적 거리 — 지도·순위·추이·산점도·블록 구성</p>'
              '<span class="go">열기 →</span></a>'
              '<a class="panel-card" href="ai_coop.html"><span class="eyebrow">Panel 2</span><h2>한미 AI 협력 트래커</h2>'
-             '<p>한미 정부·민간의 AI 협력 사건을 형태·분야별 타임라인과 매트릭스로</p>'
              '<span class="go">열기 →</span></a></div></div></section>')
     items = []
     for report in reports[:10]:
@@ -389,7 +386,7 @@ def render_data(reports: list[Report]) -> str:
         f'<td>{html.escape(use)}</td><td>{html.escape(when)}</td><td>{html.escape(key)}</td></tr>'
         for n, ep, use, when, key, where in APIS)
     body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Data</span><h1>자료와 코드</h1>'
-            f'<p>화면이 쓰는 JSON, 저장소, 연결된 API 목록. 열 정의와 산식은 <a href="codebook.html">코드북</a>에 있습니다.</p></div></header>'
+            f'</div></header>'
             f'<section class="section"><div class="wrap grid grid-2"><div class="panel"><div class="panel-head">사이트 JSON</div>'
             f'<div class="panel-body"><table><tbody>{rows}</tbody></table></div></div>'
             f'<div class="panel"><div class="panel-head">저장소</div><div class="panel-body"><p><a href="{repo}">github.com/lskyonsei-jpg/skl-economic-security-tracker</a></p>'
@@ -442,7 +439,7 @@ def render_codebook() -> str:
            ("findings", "패널 1 확인된 사항"), ("panel2", "패널 2 코딩 규칙"), ("gta", "GTA 자료 코드북")]
     toc_html = "".join(f'<li><a href="#{a}" onclick="document.getElementById(\'{a}\').open=true">{html.escape(t)}</a></li>' for a, t in toc)
     body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Codebook</span><h1>코드북</h1>'
-            f'<p>화면의 산식·분류 기준과 GTA 자료의 열 정의. 원문은 저장소 <a href="{REPO_URL}/tree/main/문서">문서/</a>의 코드북_패널.md, 코드북.md.</p></div></header>'
+            f'</div></header>'
             f'<section class="section"><div class="wrap"><div class="codebook"><ul class="toc">{toc_html}</ul>{"".join(parts)}</div></div></section>')
     return page(f"코드북 · {SITE_TITLE}", body, current="codebook.html")
 

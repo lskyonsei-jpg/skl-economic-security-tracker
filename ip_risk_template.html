@@ -17,15 +17,15 @@ svg .grid{display:inline}
 .map-wrap svg.dragging{cursor:grabbing}
 .map-tools{position:absolute;right:14px;top:14px;display:flex;gap:4px;z-index:2}
 .map-tools button{width:48px;height:48px;padding:0;line-height:1;background:var(--surface)}
-.country{fill:var(--seq-0);stroke:#fff;stroke-width:.45;cursor:pointer}
+.country{fill:var(--risk-0);stroke:#fff;stroke-width:.45;cursor:pointer}
 .country:hover,.country.selected{stroke:var(--ink);stroke-width:1.6}
-.country.r0{fill:var(--seq-0)}.country.r1{fill:var(--seq-1)}.country.r2{fill:var(--seq-2)}.country.r3{fill:var(--seq-4)}.country.r4{fill:var(--seq-5)}
+.country.r0{fill:var(--risk-0)}.country.r1{fill:var(--risk-1)}.country.r2{fill:var(--risk-2)}.country.r3{fill:var(--risk-3)}.country.r4{fill:var(--risk-4)}
 .map-wrap+.legend{padding:12px 18px;border-top:1px solid var(--line)}
 .rank{padding:6px 10px;max-height:560px;overflow:auto}
 .rank button{display:grid;grid-template-columns:44px 1fr auto;gap:4px 10px;width:100%;padding:10px 8px;border:0;border-bottom:1px solid var(--line);background:transparent;text-align:left;cursor:pointer;font:inherit;color:var(--ink);font-variant-numeric:tabular-nums;align-items:baseline}
 .rank button small{grid-column:2/-1;display:block}
 .rank button:hover{background:var(--surface-2)}
-.rank button.active{background:var(--surface-2);box-shadow:inset 3px 0 0 var(--mint-deep)}
+.rank button.active{background:var(--surface-2);box-shadow:inset 3px 0 0 var(--ink)}
 .rank small{color:var(--muted)}
 .trend{margin-top:24px}
 .trend svg{display:block;width:100%;height:auto}
@@ -50,8 +50,8 @@ svg .grid{display:inline}
 .grid{stroke:var(--line);stroke-width:.7}
 .risk-line{fill:none;stroke:var(--mint-deep);stroke-width:2.5}
 .risk-dot{fill:var(--mint-deep)}
-.trend text{font-size:24px;fill:var(--ink-2)}
-.scatter text{font-size:24px;fill:var(--ink)}
+.trend text{font-size:21px;fill:var(--ink-2)}
+.scatter text{font-size:21px;fill:var(--ink)}
 .scatter text.sub{fill:var(--ink-2)}
 .scatter text.title{font-weight:700}
 .scatter text.iso{font-weight:700;letter-spacing:.02em;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round}
@@ -77,25 +77,25 @@ p.note#method{margin:24px 0 0;padding:16px 20px;background:var(--surface);border
 .hs2-row .desc{flex:1;min-width:0}
 .composition-wrap{padding:12px 14px}
 .composition-wrap svg{display:block;width:100%;height:auto}
-.comp-axis{font-size:24px;fill:var(--ink-2)}
-.comp-title{font-size:26px;font-weight:700;fill:var(--ink)}
-.comp-label{font-size:22px;fill:#fff}
-.comp-na-label{font-size:22px;fill:var(--ink)}
+.comp-axis{font-size:21px;fill:var(--ink-2)}
+.comp-title{font-size:23px;font-weight:700;fill:var(--ink)}
+.comp-label{font-size:20px;fill:#fff}
+.comp-na-label{font-size:20px;fill:var(--ink)}
 .comp-legend{display:flex;gap:22px;flex-wrap:wrap;padding:0 20px 14px;color:var(--ink-2)}
 .comp-legend i{display:inline-block;width:18px;height:18px;margin-right:8px;vertical-align:-2px}
 .scatter-targeted-label{display:flex;align-items:center;gap:10px;cursor:pointer;text-transform:none;letter-spacing:0;color:var(--ink-2)}
 @media(max-width:900px){.dashboard{grid-template-columns:1fr}.filters{grid-template-columns:1fr}.rank-control[style]{grid-template-columns:1fr!important}}
 </style></head><body>
 <nav class="site-nav"><div class="wrap"><a class="brand" href="index.html"><span class="mark"></span>SKL Economic Security Tracker</a><div class="links"><a href="ip_risk.html" aria-current="page">Industrial Policy</a><a href="ai_coop.html">AI Cooperation</a><a href="review.html">Review</a><a href="data.html">Data</a><a href="codebook.html">Codebook</a></div></div></nav>
-<section class="hero"><div class="wrap"><span class="eyebrow">Panel 1 · GTA × BSV</span><h1>Distortive Industrial Policy Tracker</h1><p>GTA Red·Amber 산업정책 조치의 피영향국 노출 × BSV 2021 ideal point 거리</p><div class="meta"><div>자료 기준일<b id="meta-asof">—</b></div><div>연도 범위<b id="meta-years">—</b></div><div>피영향국<b id="meta-countries">—</b></div></div></div></section>
+<section class="hero"><div class="wrap"><span class="eyebrow">Panel 1 · GTA × BSV</span><h1>Distortive Industrial Policy Tracker</h1><div class="meta"><div>자료 기준일<b id="meta-asof">—</b></div><div>연도 범위<b id="meta-years">—</b></div><div>피영향국<b id="meta-countries">—</b></div></div></div></section>
 <main class="wrap">
 <section class="filters"><label>산업정책 시행국<select id="implementer"><option value="United States of America">미국</option><option value="China">중국</option></select></label><label class="year-slider">연도<input id="year" type="range" min="2010" max="2026" value="2024" step="1"><output id="year-label">2024</output></label></section>
-<main class="dashboard"><section class="panel"><div class="panel-head" id="map-head">선택연도 리스크</div><div class="map-wrap"><div class="map-tools"><button class="btn small" id="zoom-in" title="확대">＋</button><button class="btn small" id="zoom-out" title="축소">−</button><button class="btn small" id="zoom-reset" title="전체 보기">⌂</button></div><svg id="map" viewBox="0 0 1000 510" aria-label="지정학적 산업정책 리스크 세계지도"></svg><div id="tip" class="tooltip"></div></div><div id="legend" class="legend"></div></section><section class="panel"><div class="panel-head" id="rank-head">국가별 리스크 순위</div><div id="rank" class="rank"></div></section></main>
+<main class="dashboard"><section class="panel"><div class="panel-head"><span id="map-head">선택연도 리스크</span><a href="codebook.html#panel1">코드북</a></div><div class="map-wrap"><div class="map-tools"><button class="btn small" id="zoom-in" title="확대">＋</button><button class="btn small" id="zoom-out" title="축소">−</button><button class="btn small" id="zoom-reset" title="전체 보기">⌂</button></div><svg id="map" viewBox="0 0 1000 510" aria-label="지정학적 산업정책 리스크 세계지도"></svg><div id="tip" class="tooltip"></div></div><div id="legend" class="legend"></div></section><section class="panel"><div class="panel-head" id="rank-head">국가별 리스크 순위</div><div id="rank" class="rank"></div></section></main>
 <section class="panel trend"><div class="panel-head trend-head-row"><span id="trend-head">국가를 선택하세요</span><span class="add-country"><input id="add-country-input" list="add-country-list" placeholder="국가 추가" autocomplete="off"><datalist id="add-country-list"></datalist><button class="btn small" id="add-country-btn">추가</button></span></div><div id="trend-chips" class="chips-bar"></div><div class="trend-wrap"><svg id="trend" viewBox="0 0 1000 320" aria-label="연도별 리스크 추이"></svg><div id="trend-tip" class="tooltip"></div></div></section>
-<p class="note" id="method"><b>리스크 지수</b> = 그해 시행국 산업정책 중 해당국이 피영향국으로 등장한 비중 × BSV 2021 ideal point 거리. 지도 색은 시행국별 4분위. 자세한 산식과 주의사항은 <a href="codebook.html#panel1">코드북</a>.</p>
-<section class="panel scatter"><div class="panel-head">피영향 건수 × 지정학적 위치 — 미국 vs 중국</div><div class="rank-control" style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><label class="year-slider">시작연도<input id="scatter-from" type="range" min="2010" max="2026" value="2010" step="1"><output id="scatter-from-label">2010</output></label><label class="year-slider">끝연도<input id="scatter-to" type="range" min="2010" max="2026" value="2026" step="1"><output id="scatter-to-label">2026</output></label><label class="year-slider" style="grid-column:1/-1">무역비중 상위 N개국만<input id="scatter-topn" type="range" min="3" max="200" value="200" step="1"><output id="scatter-topn-label">전체</output></label><label style="grid-column:1/-1">가로축 지표<select id="scatter-xvar"><option value="bsv_ideal_point">BSV ideal point (Bailey et al. 2017)</option><option value="fed_bloc">Fed 블록 3분류 — 중국 / 비동맹 / 미국 (FEDS Notes 2025)</option></select></label><label style="grid-column:1/-1">원 크기 지표<select id="scatter-sizevar"><option value="trade_share">무역비중 — 시행국 상품무역 대비 (IMF DOTS)</option><option value="gdp_usd">GDP (World Bank WDI)</option></select></label><label class="scatter-targeted-label" style="grid-column:1/-1"><input id="scatter-targeted" type="checkbox"><span>Targeted만 보기 (GTA가 직접 지목한 국가만 · 미국 25건, 중국 13건)</span></label></div><div class="hs2-panel"><div class="hs2-head"><span>산업(HS2) 필터 — 선택 없음 = 전체</span><input id="hs2-search" placeholder="코드·품명 검색" autocomplete="off"><button class="btn small" id="hs2-clear" type="button">전체 해제</button></div><div id="hs2-list" class="hs2-list"></div></div><div class="scatter-wrap" style="position:relative"><svg id="scatter" viewBox="0 0 1000 500" aria-label="피영향 건수와 지정학적 위치"></svg><div id="scatter-tip" class="tooltip"></div></div><table class="regtable" id="regtable"></table></section>
-<p class="reg-note" style="padding:0 20px 16px">회귀·블록 검정 방법과 국가 병합 기준은 <a href="codebook.html#scatter">코드북</a>.</p>
-<section class="panel scatter" id="composition-panel"><div class="panel-head">피영향국 블록 구성 — 미국 vs 중국</div><div class="rank-control"><label>보기 방식<select id="comp-mode"><option value="cumulative">누적 — 그해 12/31에 유효한 조치</option><option value="annual">연도별 — 그해 발표된 조치</option></select></label></div><div class="composition-wrap"><svg id="composition" viewBox="0 0 1000 870" aria-label="미국과 중국의 현재 유효 산업정책 피영향국 블록별 등장 건수"></svg></div><div class="comp-legend"><span><i style="background:var(--bloc-self)"></i>자국 블록</span><span><i style="background:var(--bloc-neutral)"></i>비동맹</span><span><i style="background:var(--bloc-other)"></i>상대 블록</span></div><div id="composition-note" class="reg-note" style="padding:0 20px 16px"></div><p class="reg-note" style="padding:0 20px 16px;margin:0">집계 기준은 <a href="codebook.html#composition">코드북</a>.</p></section>
+
+<section class="panel scatter"><div class="panel-head"><span>피영향 건수 × 지정학적 위치 — 미국 vs 중국</span><a href="codebook.html#scatter">코드북</a></div><div class="rank-control" style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><label class="year-slider">시작연도<input id="scatter-from" type="range" min="2010" max="2026" value="2010" step="1"><output id="scatter-from-label">2010</output></label><label class="year-slider">끝연도<input id="scatter-to" type="range" min="2010" max="2026" value="2026" step="1"><output id="scatter-to-label">2026</output></label><label class="year-slider" style="grid-column:1/-1">무역비중 상위 N개국만<input id="scatter-topn" type="range" min="3" max="200" value="200" step="1"><output id="scatter-topn-label">전체</output></label><label style="grid-column:1/-1">가로축 지표<select id="scatter-xvar"><option value="bsv_ideal_point">BSV ideal point (Bailey et al. 2017)</option><option value="fed_bloc">Fed 블록 3분류 — 중국 / 비동맹 / 미국 (FEDS Notes 2025)</option></select></label><label style="grid-column:1/-1">원 크기 지표<select id="scatter-sizevar"><option value="trade_share">무역비중 — 시행국 상품무역 대비 (IMF DOTS)</option><option value="gdp_usd">GDP (World Bank WDI)</option></select></label><label class="scatter-targeted-label" style="grid-column:1/-1"><input id="scatter-targeted" type="checkbox"><span>Targeted만 보기 (GTA가 직접 지목한 국가만 · 미국 25건, 중국 13건)</span></label></div><div class="hs2-panel"><div class="hs2-head"><span>산업(HS2) 필터 — 선택 없음 = 전체</span><input id="hs2-search" placeholder="코드·품명 검색" autocomplete="off"><button class="btn small" id="hs2-clear" type="button">전체 해제</button></div><div id="hs2-list" class="hs2-list"></div></div><div class="scatter-wrap" style="position:relative"><svg id="scatter" viewBox="0 0 1000 500" aria-label="피영향 건수와 지정학적 위치"></svg><div id="scatter-tip" class="tooltip"></div></div><table class="regtable" id="regtable"></table></section>
+
+<section class="panel scatter" id="composition-panel"><div class="panel-head"><span>피영향국 블록 구성 — 미국 vs 중국</span><a href="codebook.html#composition">코드북</a></div><div class="rank-control"><label>보기 방식<select id="comp-mode"><option value="cumulative">누적 — 그해 12/31에 유효한 조치</option><option value="annual">연도별 — 그해 발표된 조치</option></select></label></div><div class="composition-wrap"><svg id="composition" viewBox="0 0 1000 760" aria-label="미국과 중국의 현재 유효 산업정책 피영향국 블록별 등장 건수"></svg></div><div class="comp-legend"><span><i style="background:var(--bloc-self)"></i>자국 블록</span><span><i style="background:var(--bloc-neutral)"></i>비동맹</span><span><i style="background:var(--bloc-other)"></i>상대 블록</span></div><div id="composition-note" class="reg-note" style="padding:0 20px 16px"></div></section>
 </main>
 <footer class="site-footer"><div class="wrap"><span>SKL Economic Security Tracker · 연구용 자료</span><span>자료 기준일 <span id="foot-asof">—</span> · <span class="build" id="foot-build">빌드 —</span></span></div></footer>
 <script>
@@ -138,7 +138,7 @@ function computeScatterDomain(xk,sk){xk=xk||state.xvar;sk=sk||state.sizevar;if(x
 function syncHeights(){const panels=document.querySelectorAll('.dashboard>.panel');if(panels.length<2)return;const leftH=panels[0].getBoundingClientRect().height;const head=panels[1].querySelector('.panel-head').getBoundingClientRect().height;$('#rank').style.maxHeight=Math.max(160,leftH-head)+'px'}
 function render(){const rankBy=aggregate(state.year),rows=Object.values(rankBy).sort((a,b)=>b.risk-a.risk);const impLabel=state.imp==='China'?'중국':'미국';$('#map-head').textContent=`${impLabel} 시행 · ${state.year}년 리스크`;$('#rank-head').textContent=`${impLabel} 시행 · ${state.year}년 국가별 리스크 순위`;document.querySelectorAll('.country').forEach(el=>{const x=rankBy[el.dataset.iso],picked=selectedList.includes(el.dataset.iso);el.setAttribute('class',`country ${x?cls(x.risk,state.imp):'r0'} ${picked?'selected':''}`);el.style.stroke=picked?colourOf(el.dataset.iso):'';el.onmousemove=e=>{const t=$('#tip');t.style.display='block';t.style.left=e.offsetX+16+'px';t.style.top=e.offsetY+16+'px';t.innerHTML=x?`<b>${esc(x.country)}</b><br>리스크 ${x.risk.toFixed(4)}<br>노출 비중 ${(x.share*100).toFixed(1)}%<br>BSV 거리 ${x.distance.toFixed(2)}`:`<b>${esc(el.dataset.name)}</b><br>BSV 관측 없음`};el.onmouseleave=()=>$('#tip').style.display='none';el.onclick=()=>{if(x)toggleCountry(x.iso)}});
  $('#rank').innerHTML=rows.slice(0,30).map((x,i)=>{const si=selectedList.indexOf(x.iso);return`<button data-iso="${x.iso}" class="${si>=0?'active':''}" style="${si>=0?`box-shadow:inset 4px 0 0 ${colourOf(x.iso)}`:''}"><span>${i+1}</span><span>${esc(x.country)}</span><b>${x.risk.toFixed(4)}</b><small>노출 ${(x.share*100).toFixed(1)}% · 거리 ${x.distance.toFixed(2)}</small></button>`}).join('');document.querySelectorAll('#rank button').forEach(b=>b.onclick=()=>toggleCountry(b.dataset.iso));
- const leg=TH[state.imp];$('#legend').innerHTML=`<span><i style="background:var(--seq-0)"></i>0</span><span><i style="background:var(--seq-1)"></i>≤ ${leg[0].toFixed(3)}</span><span><i style="background:var(--seq-2)"></i>≤ ${leg[1].toFixed(3)}</span><span><i style="background:var(--seq-4)"></i>≤ ${leg[2].toFixed(3)}</span><span><i style="background:var(--seq-5)"></i>&gt; ${leg[2].toFixed(3)}</span>`;
+ const leg=TH[state.imp];$('#legend').innerHTML=`<span><i style="background:var(--risk-0)"></i>0</span><span><i style="background:var(--risk-1)"></i>≤ ${leg[0].toFixed(3)}</span><span><i style="background:var(--risk-2)"></i>≤ ${leg[1].toFixed(3)}</span><span><i style="background:var(--risk-3)"></i>≤ ${leg[2].toFixed(3)}</span><span><i style="background:var(--risk-4)"></i>&gt; ${leg[2].toFixed(3)}</span><span class="small">낮음 → 높음 (시행국별 4분위)</span>`;
  drawTrend();drawScatter();syncHeights();}
 function renderChips(){const bar=$('#trend-chips');if(!selectedList.length){bar.innerHTML='';}else{bar.innerHTML=selectedList.map(iso=>{const row=D.rows.find(r=>r.affected_iso3===iso);const name=row?row.affected_country:iso;return`<span class="chip" style="border-color:${colourOf(iso)}"><i style="background:${colourOf(iso)}"></i>${esc(name)}<button data-iso="${iso}" title="빼기">×</button></span>`}).join('');bar.querySelectorAll('button').forEach(b=>b.onclick=()=>toggleCountry(b.dataset.iso))}
  const input=$('#add-country-input'),remain=COUNTRY_LIST.filter(c=>!selectedList.includes(c.iso));input.placeholder=`국가 추가 (${remain.length}개)`;$('#add-country-list').innerHTML=remain.map(c=>`<option value="${esc(c.country)}">`).join('')}
@@ -231,7 +231,7 @@ function scatterPanel(svgId,key){const svg=$('#'+svgId),gap=34,subW=(1000-36-gap
  // 라벨 크기를 원 반지름(무역비중)에 비례시킨다 — 전에는 고정 9px이라 작은
  // 원 위로 글자가 삐져나와 서로 겹쳤다. 최소 6px은 유지해야 읽히고, 큰 원도
  // 원 지름을 넘지 않게 14px에서 자른다.
- out+=byRad.slice(0,10).map(it=>{const fs=22;return `<text class="iso" x="${it.cx.toFixed(1)}" y="${(it.cy+fs*.36).toFixed(1)}" text-anchor="middle" style="font-size:${fs}px;fill:${lineColor}" pointer-events="none">${esc(it.r.affected_iso3)}</text>`}).join('');
+ out+=byRad.slice(0,10).map(it=>{const fs=19;return `<text class="iso" x="${it.cx.toFixed(1)}" y="${(it.cy+fs*.36).toFixed(1)}" text-anchor="middle" style="font-size:${fs}px;fill:${lineColor}" pointer-events="none">${esc(it.r.affected_iso3)}</text>`}).join('');
  out+=`<text class="sub" x="${ox+subW/2}" y="${plotB+66}" text-anchor="middle">BSV ideal point (친중 ← → 친미)</text>`});
 out+=`<text class="sub" transform="rotate(-90)" x="-${oy+plotH/2}" y="26" text-anchor="middle">피영향 건수</text>`;svg.innerHTML=out;bindScatterTip(svg);return stats}
 // ---- Fed(2025) 블록 3분류 화면 ---------------------------------------
@@ -281,7 +281,7 @@ function blocPanel(svgId){const svg=$('#'+svgId),gap=34,subW=(1000-36-gap*2-12)/
   out+=byRad.map(it=>`<circle class="dot" cx="${it.cx.toFixed(1)}" cy="${it.cy.toFixed(1)}" r="${it.rad.toFixed(1)}" fill="${color}" fill-opacity=".85" stroke="#fff" stroke-width="1.4" data-tip="${esc(it.r.affected_country)}|${esc(BLOCS.find(([k])=>k===it.r.fed_bloc)?.[1]??'분류없음')}|${it.r.exposed_count.toLocaleString()}|${esc(fmtSize(it.r[state.sizevar]))}"/>`).join('');
   BLOCS.forEach(([k],i)=>{const g=groups[k];if(!g)return;const py=y(Math.min(g.mean,yMax));
    out+=`<line x1="${(cx0(i)-bandW*.42).toFixed(1)}" x2="${(cx0(i)+bandW*.42).toFixed(1)}" y1="${py.toFixed(1)}" y2="${py.toFixed(1)}" stroke="${lineColor}" stroke-width="3.5" opacity=".95"/>`});
-  out+=byRad.slice(0,10).map(it=>{const fs=22;return `<text class="iso" x="${it.cx.toFixed(1)}" y="${(it.cy+fs*.36).toFixed(1)}" text-anchor="middle" style="font-size:${fs}px;fill:${lineColor}" pointer-events="none">${esc(it.r.affected_iso3)}</text>`}).join('');
+  out+=byRad.slice(0,10).map(it=>{const fs=19;return `<text class="iso" x="${it.cx.toFixed(1)}" y="${(it.cy+fs*.36).toFixed(1)}" text-anchor="middle" style="font-size:${fs}px;fill:${lineColor}" pointer-events="none">${esc(it.r.affected_iso3)}</text>`}).join('');
   out+=`<text class="sub" x="${ox+subW/2}" y="${plotB+88}" text-anchor="middle">Fed 블록 (친중 ← → 친미)</text>`});
  out+=`<text class="sub" transform="rotate(-90)" x="-${oy+plotH/2}" y="26" text-anchor="middle">피영향 건수</text>`;svg.innerHTML=out;bindScatterTip(svg);return stats}
 function renderBlocTable(list){let html='<thead><tr><th>시행국</th><th>블록</th><th>n</th><th>평균 건수</th><th>중앙값</th><th>합계(점유율)</th></tr></thead><tbody>';
@@ -307,16 +307,16 @@ Promise.all([fetch('ip_risk.json?v=20260824',{cache:'no-store'}).then(r=>r.json(
 // 원본 D.composition은 발표연도별(비누적) 값이다. 누적 모드는 이걸 매번
 // 새로 합산해서 만든다(원본을 직접 고쳐 쓰면 모드를 되돌릴 수 없다 — 이전
 // 구현의 실수였다).
-function drawCompositionBars(rows,titleSuffix){const svg=$('#composition');if(!svg)return;const years=D.years,panels=[['United States of America','미국'],['China','중국']];let out='';const top=76,rowH=46,barH=32,panelW=480,gap=40,left0=0,totalW=100;
+function drawCompositionBars(rows,titleSuffix){const svg=$('#composition');if(!svg)return;const years=D.years,panels=[['United States of America','미국'],['China','중국']];let out='';const top=70,rowH=40,barH=28,panelW=480,gap=40,left0=0,totalW=92;
  panels.forEach(([imp,label],pi)=>{const ox=left0+pi*(panelW+gap),labelW=66,barX=ox+labelW,barW=panelW-labelW-totalW;
   const rs=rows.filter(v=>v.implementer===imp);
   const mx=rs.reduce((a,r)=>Math.max(a,r.classified_count),0)||1;
   const step=pickCountStep(mx),nT=Math.max(1,Math.ceil(mx/step)),axisMax=step*nT;
   out+=`<text class="comp-title" x="${barX+barW/2}" y="28" text-anchor="middle">${label} 시행</text>`;
   for(let t=0;t<=4;t+=2){const v=Math.round(axisMax*t/4),x=barX+barW*t/4;out+=`<text class="comp-axis" x="${x}" y="62" text-anchor="${t===0?'start':t===4?'end':'middle'}">${v.toLocaleString()}</text>`}
-  years.forEach((year,yi)=>{const r=rs.find(v=>v.year===year),y=top+yi*rowH;if(!r)return;out+=`<text class="comp-axis" x="${barX-10}" y="${y+24}" text-anchor="end">${year}</text>`;let x=barX;
-   [['own_bloc_count',tok('--bloc-self'),'comp-label'],['nonaligned_count',tok('--bloc-neutral'),'comp-na-label'],['opposing_bloc_count',tok('--bloc-other'),'comp-label']].forEach(([ck,color,cls])=>{const w=barW*r[ck]/axisMax,group=ck==='own_bloc_count'?'자국 블록':ck==='nonaligned_count'?'비동맹':'상대 블록';out+=`<rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${barH}" fill="${color}"><title>${label} ${year} · ${group} ${r[ck].toLocaleString()}건</title></rect>`;if(w>=r[ck].toLocaleString().length*13+10)out+=`<text class="${cls}" x="${(x+w/2).toFixed(1)}" y="${y+24}" text-anchor="middle">${r[ck].toLocaleString()}</text>`;x+=w});
-   out+=`<text class="comp-axis" x="${(x+8).toFixed(1)}" y="${y+24}">${r.classified_count.toLocaleString()}${year===2026?'*':''}</text>`})});
+  years.forEach((year,yi)=>{const r=rs.find(v=>v.year===year),y=top+yi*rowH;if(!r)return;out+=`<text class="comp-axis" x="${barX-10}" y="${y+21}" text-anchor="end">${year}</text>`;let x=barX;
+   [['own_bloc_count',tok('--bloc-self'),'comp-label'],['nonaligned_count',tok('--bloc-neutral'),'comp-na-label'],['opposing_bloc_count',tok('--bloc-other'),'comp-label']].forEach(([ck,color,cls])=>{const w=barW*r[ck]/axisMax,group=ck==='own_bloc_count'?'자국 블록':ck==='nonaligned_count'?'비동맹':'상대 블록';out+=`<rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${barH}" fill="${color}"><title>${label} ${year} · ${group} ${r[ck].toLocaleString()}건</title></rect>`;if(w>=r[ck].toLocaleString().length*12+8)out+=`<text class="${cls}" x="${(x+w/2).toFixed(1)}" y="${y+21}" text-anchor="middle">${r[ck].toLocaleString()}</text>`;x+=w});
+   out+=`<text class="comp-axis" x="${(x+8).toFixed(1)}" y="${y+21}">${r.classified_count.toLocaleString()}${year===2026?'*':''}</text>`})});
  svg.innerHTML=out}
 function drawComposition(){if(!D||!D.composition||!D.composition_annual)return;const mode=state.compMode;const rows=mode==='cumulative'?D.composition:D.composition_annual;drawCompositionBars(rows,'');
  const notes=[['United States of America','미국'],['China','중국']].map(([imp,label])=>{const rs=rows.filter(r=>r.implementer===imp);

@@ -31,6 +31,12 @@
   --seq-3: #7ec8c5;
   --seq-4: #3f9a97;
   --seq-5: #1f5f5e;
+  /* 패널 1 지도 리스크 5단계: 파랑(낮음) → 빨강(높음). 2026-10-22 연구자 지시 */
+  --risk-0: #cfdcf2;
+  --risk-1: #8fb0e3;
+  --risk-2: #c9b8c4;
+  --risk-3: #ee8a6c;
+  --risk-4: #c0392b;
   /* 블록 3분류 */
   --bloc-self: #3f9a97;        /* 자국 블록 */
   --bloc-neutral: #c9ccd1;     /* 비동맹 */
@@ -236,15 +242,25 @@ ul.changes .badge b { font-weight: 400; color: var(--ink); }
    바닥값을 body 아래 전부에 깔고 제목만 더 크게 둔다. 인라인 style 보다 우선하도록 !important.
    SVG 안 글자는 viewBox 단위로 크기가 정해지므로 여기서 빼고, 화면별 CSS 가 user unit 으로 정한다
    (1000 단위 viewBox 가 1150px 로 그려질 때 24 단위 ≈ 27.6px ≈ 20.7pt). */
-html { font-size: 20pt; }
-body { font-size: 20pt; line-height: 1.5; }
-body :where(:not(svg, svg *)) { font-size: 20pt !important; }
-svg text { font-size: 24px; }
-h3, .panel-card h3 { font-size: 24pt !important; }
-h2, .panel-card h2, article h2 { font-size: 28pt !important; }
-h1, .hero h1, article h1 { font-size: 36pt !important; }
-.hero .meta b { font-size: 28pt !important; }
-.stat .value { font-size: 36pt !important; }
+/* 2026-10-22 재조정(연구자): 크기와 한눈에 들어오기를 같이 — 본문 15pt, 보조 13pt, 차트 글자 21px(viewBox). */
+html { font-size: 15pt; }
+body { font-size: 15pt; line-height: 1.45; }
+body :where(:not(svg, svg *)) { font-size: 15pt !important; }
+svg text { font-size: 21px; }
+small, .small, .note, .reg-note, .eyebrow, .label, .panel-head, th, .site-nav .links a, .chip, .legend, .tooltip, .btn.small,
+ul.changes .badge, ul.changes li .m, .rank small, .hero .meta div, .site-footer, .site-footer .build, .bars .row, .pairs, .matrix td.cell small,
+.submit-bar .hint, .decide label, .rhead .small, .toc li a, .hs2-row, .hs2-head, .comp-legend, .regtable, .api-table .small, code { font-size: 13pt !important; }
+.hero .meta b, .btn { font-size: 15pt !important; }
+h3, .panel-card h3, .codebook h3 { font-size: 18pt !important; }
+h2, .panel-card h2, article h2, .codebook details.sec.lv2 > summary { font-size: 22pt !important; }
+h1, .hero h1, article h1 { font-size: 30pt !important; }
+.hero .meta b { font-size: 22pt !important; }
+.stat .value { font-size: 28pt !important; }
+.hero .wrap { padding-top: 44px; padding-bottom: 44px; }
+.hero h1 { margin-bottom: 10px; }
+.hero .meta { margin-top: 18px; }
+.section { padding: 40px 0; }
+.site-footer { margin-top: 56px; }
 .site-nav .wrap { height: auto; padding: 14px 0; flex-wrap: wrap; gap: 12px 24px; }
 .site-nav .links { flex-wrap: wrap; gap: 14px 24px; }
 .eyebrow, .label, .panel-head, th, .site-nav .links a, .btn { letter-spacing: 1.5px; }
@@ -266,15 +282,15 @@ input[type="checkbox"], input[type="radio"] { width: 22px; height: 22px; vertica
 .bars .row { grid-template-columns: 150px 1fr 150px; }
 .bars .bar { height: 20px; }
 .pairs li { grid-template-columns: 1fr 40px 1fr 64px; }
-.timeline-wrap svg { min-height: 320px; }
-.tl-axis, .tl-admin { font-size: 22px; }
+.timeline-wrap svg { min-height: 280px; }
+.tl-axis, .tl-admin { font-size: 20px; }
 .records-toggle { padding: 18px 20px; }
 .records-toggle summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .records-toggle summary::-webkit-details-marker { display: none; }
 .records-toggle summary .btn::before { content: "열기"; }
 .records-toggle[open] summary .btn::before { content: "닫기"; }
 .records-toggle .tablebox { margin-top: 16px; }
-#records { min-width: 1480px; }
+#records { min-width: 1250px; }
 #records td { vertical-align: top; }
 #records td.d { white-space: nowrap; }
 /* 코드북 */
@@ -297,6 +313,21 @@ input[type="checkbox"], input[type="radio"] { width: 22px; height: 22px; vertica
 .api-table td:nth-child(4) { word-break: break-all; }
 .api-table .small { display: block; color: var(--muted); }
 
+/* ---- 판단 대기: 카드(한 줄 요약 + 결정 + 열기) ---- */
+.rsec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.rcard { margin-bottom: 10px; padding: 12px 18px; }
+.rhead { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+.rhead .rtitle { flex-basis: 100%; }
+.rhead .rmeta { color: var(--ink-2); }
+.rcard .decide { margin-top: 8px; padding-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; }
+.rcard .decide label { margin: 0; }
+.rcard details.rmore { border: 0; flex-basis: 100%; }
+.rcard details.rmore > summary { padding: 0; display: inline-block; }
+.rcard details.rmore > summary::before { content: none; }
+.rcard details.rmore > summary .btn::before { content: "열기"; }
+.rcard details.rmore[open] > summary .btn::before { content: "닫기"; }
+.rcard details.rmore > p { margin: 10px 0 0; }
+.rcard details.rmore textarea { width: 100%; margin-top: 10px; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); padding: 8px 12px; min-height: 70px; }
 /* ---- 판단 대기: 결정 입력 ---- */
 .decide { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .decide label { text-transform: none; letter-spacing: 0; margin-right: 18px; cursor: pointer; color: var(--ink); }

@@ -148,7 +148,7 @@ def render(agg: dict, meta: dict) -> str:
 <div class="wrap">
   <section class="section">
     <span class="eyebrow">Timeline</span>
-    <div class="panel"><div class="panel-head"><span>사건 타임라인 — 형태별 마커, 행정부 경계</span><span id="tl-legend" class="legend"></span></div>
+    <div class="panel"><div class="panel-head"><span>사건 타임라인</span><span id="tl-legend" class="legend"></span><a href="codebook.html#panel2">코드북</a></div>
       <div class="panel-body timeline-wrap"><svg id="timeline" viewBox="0 0 1000 300" aria-label="한미 AI 협력 사건 타임라인"></svg><div id="tl-tip" class="tooltip"></div></div></div>
   </section>
   <section class="section grid grid-2">
@@ -164,7 +164,6 @@ def render(agg: dict, meta: dict) -> str:
     <div class="panel"><details class="records-toggle" id="records-box"><summary><span class="btn small"></span><span>사건 목록 {n}건 (최신순)</span><input id="q" type="search" placeholder="검색" onclick="event.preventDefault()"></summary>
       <div class="tablebox"><table id="records"><thead><tr><th>날짜</th><th>상태</th><th>형태</th><th>분야</th><th>미국 측</th><th>한국 측</th><th>내용</th><th>규모</th><th>원문</th></tr></thead><tbody></tbody></table></div></details></div>
   </section>
-  <p class="note">'확정'은 연구자 코딩, '자동'은 모델 코딩. 형태·분야·금액 기준은 <a href="codebook.html#panel2">코드북</a>.</p>
 </div>
 <script>
 const FORMS={json.dumps(agg["forms"], ensure_ascii=False)};
@@ -201,7 +200,7 @@ def _page(title: str, hero_meta: str, body: str, asof: str, built: str) -> str:
 <title>{html.escape(title)} · SKL</title><link rel="stylesheet" href="site.css"></head>
 <body>{nav("ai_coop.html")}
 <header class="hero"><div class="wrap"><span class="eyebrow">Panel 2</span><h1>{html.escape(title)}</h1>
-<p>한미 정부·민간의 AI 협력 사건을 날짜·형태·분야별로 추적합니다.</p>{hero_meta}</div></header>
+{hero_meta}</div></header>
 {body}
 {footer(asof, built)}
 </body></html>'''
@@ -226,24 +225,26 @@ def _esc(v) -> str:
 def render_review(props: list[dict], events_by_id: dict) -> str:
     built = datetime.now().strftime("%Y-%m-%d %H:%M")
     by_task = {k: [p for p in props if p["task"] == k] for k in ("A", "B", "C")}
-    meta = (f'<div class="meta"><div>대기<b>{len(props)}건</b></div><div>A 새 사건<b>{len(by_task["A"])}</b></div>'
+    hero_meta = (f'<div class="meta"><div>대기<b>{len(props)}건</b></div><div>A 새 사건<b>{len(by_task["A"])}</b></div>'
             f'<div>B 갱신<b>{len(by_task["B"])}</b></div><div>C 재검토<b>{len(by_task["C"])}</b></div></div>')
     def ev_line(ev: dict) -> str:
         return (f'{_esc(ev.get("date"))} · {_esc(ev.get("form"))} · {_esc(ev.get("track"))} · {_esc(", ".join(ev.get("sectors", [])))} · '
                 f'금액 {_esc(ev.get("amount_usd_bn"))} · conf {_esc(ev.get("confidence"))}')
-    def card(p: dict, body: str) -> str:
+    def card(p: dict, title: str, meta: str, body: str) -> str:
+        """한 줄 요약(제목·요지) + 결정 라디오를 항상 보이고, 상세는 '열기' 뒤에 둔다."""
         e = p.get("evidence", {})
         link = f'<a href="{_esc(e.get("url"))}" target="_blank" rel="noopener">원문</a>' if e.get("url") else ""
-        return (f'<div class="panel" style="margin-bottom:14px"><div class="panel-head"><span><b>{_esc(p["id"])}</b> · {_esc(p["created"])}</span>'
-                f'<span>{link}</span></div>'
-                f'<div class="panel-body">{body}'
-                f'<p class="note" style="margin-top:10px">원문 발췌({_esc(e.get("via", ""))} · {_esc(e.get("chars", ""))}자): {_esc(str(e.get("excerpt", ""))[:300])}…</p>'
-                f'<div class="decide" data-id="{_esc(p["id"])}">'
-                f'<label><input type="radio" name="d-{_esc(p["id"])}" value="approve"> 승인</label>'
-                f'<label><input type="radio" name="d-{_esc(p["id"])}" value="reject"> 기각</label>'
-                f'<label><input type="radio" name="d-{_esc(p["id"])}" value="hold"> 보류</label>'
-                f'<textarea data-note="{_esc(p["id"])}" placeholder="의견이나 수정 지시 (예: 금액은 20으로, 형태는 집행이 맞음, 주체에 기아 추가)"></textarea>'
-                f'</div></div></div>')
+        pid = _esc(p["id"])
+        return (f'<div class="panel rcard" data-id="{pid}"><div class="rhead"><span class="small">{pid}{" · " + link if link else ""}</span>'
+                f'<b class="rtitle">{title}</b><span class="small rmeta">{meta}</span></div>'
+                f'<div class="decide" data-id="{pid}">'
+                f'<label><input type="radio" name="d-{pid}" value="approve"> 승인</label>'
+                f'<label><input type="radio" name="d-{pid}" value="reject"> 기각</label>'
+                f'<label><input type="radio" name="d-{pid}" value="hold"> 보류</label>'
+                f'<details class="rmore"><summary><span class="btn small"></span></summary>{body}'
+                f'<p class="note">원문 발췌({_esc(e.get("via", ""))} · {_esc(e.get("chars", ""))}자): {_esc(str(e.get("excerpt", ""))[:300])}…</p>'
+                f'<textarea data-note="{pid}" placeholder="의견이나 수정 지시 (예: 금액은 20으로, 형태는 집행이 맞음, 주체에 기아 추가)"></textarea>'
+                f'</details></div></div>')
     sections = []
     titles = {"A": "새 사건 후보", "B": "기존 사건 갱신 후보", "C": "기존 판단 재검토"}
     for k in ("A", "B", "C"):
@@ -260,12 +261,13 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                         f'<a href="{_esc(m.get("url"))}" target="_blank" rel="noopener">{_esc((m.get("title") or "")[:30])}</a> ({_esc(m.get("form"))}, {_esc(m.get("confidence"))})' for m in more) + '</p>'
                 if p.get("form_variants"):
                     extra += f'<p class="small">다른 기사의 form 판정: {_esc(", ".join(sorted(set(p["form_variants"]))))}</p>'
-                body = (f'<h3 style="margin:0 0 6px">{_esc(ev.get("title"))}</h3><p>{ev_line(ev)}</p>'
-                        f'<p>미국 측 {_esc(", ".join(ev.get("us_parties", [])))} / 한국 측 {_esc(", ".join(ev.get("kr_parties", [])))}</p>'
+                title, meta = _esc(ev.get("title")), ev_line(ev)
+                body = (f'<p>미국 측 {_esc(", ".join(ev.get("us_parties", [])))} / 한국 측 {_esc(", ".join(ev.get("kr_parties", [])))}</p>'
                         f'<p>{_esc(ev.get("summary"))}</p><p class="note">모델 메모: {_esc(ev.get("note"))}</p>{extra}')
             elif k == "B":
                 pl = p["payload"]; tgt = events_by_id.get(p.get("target_id"), {})
-                parts = [f'<h3 style="margin:0 0 6px">대상: {_esc(p.get("target_title"))}</h3><p>기존: {ev_line(tgt) if tgt else "-"}</p><p>관계: <b>{_esc(p.get("relation"))}</b> · conf {_esc(p.get("confidence"))}</p>']
+                title, meta = f'갱신: {_esc(p.get("target_title"))}', f'관계 {_esc(p.get("relation"))} · conf {_esc(p.get("confidence"))}'
+                parts = [f'<p>기존: {ev_line(tgt) if tgt else "-"}</p>']
                 if pl.get("new_event"):
                     parts.append(f'<p>후속 사건: {_esc(pl["new_event"].get("title"))} — {ev_line(pl["new_event"])}</p>')
                 for u in pl.get("updates", []):
@@ -277,11 +279,13 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
             else:
                 pl = p["payload"]
                 rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_esc(d.get("old"))}</td><td>{_esc(d.get("new"))}</td></tr>' for d in pl.get("diffs", []))
-                body = (f'<h3 style="margin:0 0 6px">대상: {_esc(p.get("target_title"))}</h3>'
-                        f'<table><thead><tr><th>필드</th><th>기존(연구자)</th><th>모델</th></tr></thead><tbody>{rows}</tbody></table>'
+                title = f'재검토: {_esc(p.get("target_title"))}'
+                meta = " · ".join(f'{_esc(d.get("field"))} {_esc(d.get("old"))} → {_esc(d.get("new"))}' for d in pl.get("diffs", []))
+                body = (f'<table><thead><tr><th>필드</th><th>기존(연구자)</th><th>모델</th></tr></thead><tbody>{rows}</tbody></table>'
                         f'<p class="note" style="margin-top:8px">모델 근거: {_esc(p.get("note"))}</p>')
-            cards.append(card(p, body))
-        sections.append(f'<section class="section"><div class="wrap"><span class="eyebrow">{k}. {titles[k]} ({len(items)}건)</span>'
+            cards.append(card(p, title, meta, body))
+        toggle = '<button class="btn small open-all" type="button">모두 열기</button>' if cards else ''
+        sections.append(f'<section class="section rsec"><div class="wrap"><div class="rsec-head"><span class="eyebrow">{k}. {titles[k]} ({len(items)}건)</span>{toggle}</div>'
                         + ("".join(cards) if cards else '<div class="empty">없음</div>') + '</div></section>')
     howto = ('<section class="section"><div class="wrap"><details><summary>제출 방법</summary><p class="note">'
              '카드마다 승인·기각·보류를 고르고, 고칠 내용이 있으면 의견란에 적습니다. "GitHub으로 제출"을 누르면 내용이 채워진 GitHub Issue 화면이 열리고, 거기서 등록 버튼만 누르면 됩니다(GitHub 로그인 필요). '
@@ -301,9 +305,10 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
   const count=()=>{const n=Object.values(D).filter(x=>x.decision).length;document.getElementById('decided-count').textContent='선택 '+n+'건';};
   cards.forEach(c=>{const id=c.dataset.id; const d=D[id]||{};
     c.querySelectorAll('input[type=radio]').forEach(r=>{if(d.decision===r.value)r.checked=true; r.addEventListener('change',()=>{D[id]=Object.assign(D[id]||{},{decision:r.value});save(D);count();});});
-    const ta=c.querySelector('textarea'); if(d.note)ta.value=d.note; ta.addEventListener('input',()=>{D[id]=Object.assign(D[id]||{},{note:ta.value});save(D);});
+    const ta=c.querySelector('textarea'); if(d.note){ta.value=d.note; c.querySelector('details.rmore').open=true;} ta.addEventListener('input',()=>{D[id]=Object.assign(D[id]||{},{note:ta.value});save(D);});
   });
   count();
+  document.querySelectorAll('.open-all').forEach(b=>b.addEventListener('click',()=>{const ds=[...b.closest('.rsec').querySelectorAll('details.rmore')];const open=ds.some(d=>!d.open);ds.forEach(d=>d.open=open);b.textContent=open?'모두 닫기':'모두 열기';}));
   const lines=()=>Object.entries(D).filter(([id,d])=>d.decision||(d.note&&d.note.trim())).map(([id,d])=>'- '+id+': '+(d.decision||'hold')+(d.note&&d.note.trim()?' | 의견: '+d.note.trim().replace(/\\s*\\n+\\s*/g,' / '):''));
   document.getElementById('submit-decisions').addEventListener('click',()=>{const L=lines(); if(!L.length){alert('선택된 결정이 없습니다.');return;}
     const today=new Date().toISOString().slice(0,10); const body='## 결정 '+today+'\\n\\n'+L.join('\\n')+'\\n\\n(판단 대기 페이지에서 제출. 다음 자동 실행 때 반영됩니다.)';
@@ -317,8 +322,7 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
     body = "".join(sections) + howto + submit_bar + script
     head = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<title>판단 대기 · SKL</title><link rel="stylesheet" href="site.css"></head>\n'
     hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Review queue</span><h1>판단 대기</h1>'
-            '<p>자동 탐지·코딩이 낸 제안입니다. 승인한 것만 반영됩니다.</p>'
-            + meta + '</div></header>\n')
+            + hero_meta + '</div></header>\n')
     return head + "<body>" + nav("review.html") + "\n" + hero + body + "\n" + footer("", built) + "\n</body></html>"
 
 
