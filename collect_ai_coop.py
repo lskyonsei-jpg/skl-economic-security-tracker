@@ -8,6 +8,9 @@
 모델: claude-opus-5-5 (연구자 확정 2026-10-22). 구조화 출력(output_config.format)으로 스키마를 강제한다.
 키:   환경변수 ANTHROPIC_API_KEY (GitHub Secrets). 로컬에는 없으므로 recode 는 CI 에서 돈다.
 비용 안전장치: 한 번 실행에 MAX_CALLS 회 이상 호출하지 않는다.
+
+유료벽 3단계(연구자 결정 2026-10-22): 원문 본문 → 같은 사건의 다른 무료 출처(보도자료·정부 문서 우선) → 제목만(확신도 상한 0.5).
+재현성: 코딩에 쓴 입력 원문을 그대로 기록한다(ai_coop_*_inputs.jsonl, 실행 아티팩트). 공개 결과에는 URL·수집 경로·길이·SHA-256·앞 500자.
 """
 from __future__ import annotations
 
@@ -170,10 +173,14 @@ def build_system(events: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def code_article(client, system: str, meta: dict, body: str, effort: str) -> tuple[dict, dict]:
-    """기사 하나를 Task A 로 코딩한다. (결과, usage)"""
-    user = (f"[기사 메타]\nURL: {meta.get('url', '')}\n매체/도메인: {meta.get('domain', '')}\n게재일(참고): {meta.get('published', '')}\n"
-            f"제목: {meta.get('title', '')}\n\n[본문]\n{body}")
+def code_article(client, system: str, meta: dict, body: str, effort: str, kind: str = "body") -> tuple[dict, dict]:
+    """기사 하나를 Task A 로 코딩한다. (결과, usage). kind='title' 이면 제목만 있는 입력이다."""
+    if kind == "title":
+        user = (f"[입력 수준] 제목(과 짧은 요약)만 있다. 본문을 확보하지 못했다. 본문 없이 확정할 수 없는 필드는 null 로 두고 "
+                f"confidence 는 0.5 를 넘기지 않는다.\nURL: {meta.get('url', '')}\n\n[제목·요약]\n{body}")
+    else:
+        user = (f"[기사 메타]\nURL: {meta.get('url', '')}\n매체/도메인: {meta.get('domain', '')}\n게재일(참고): {meta.get('published', '')}\n"
+                f"제목: {meta.get('title', '')}\n\n[본문]\n{body}")
     response = client.messages.create(
         model=MODEL, max_tokens=4000,
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
@@ -233,6 +240,126 @@ def fetch_body(url: str) -> tuple[str, dict]:
     return best, best_info
 
 
+PAYWALL_DOMAINS = ("wsj.com", "ft.com", "bloomberg.com", "nytimes.com", "economist.com", "reuters.com", "nikkei.com")
+GRADE1_HINTS = ("newsroom", "news.", "press", "pr.", ".gov", ".go.kr", "korea.kr", "whitehouse", "investors.", "ir.", "semiconductor.samsung", "nvidianews")
+
+
+def _decode_gnews(link: str) -> str | None:
+    """Google News RSS 의 리다이렉트 링크 -> 실제 기사 URL. 옛 형식은 base64 안에 URL, 새 형식은 batchexecute."""
+    import base64
+    import requests
+    m = re.search(r"/articles/([^?/]+)", link)
+    if not m:
+        return link if "news.google.com" not in link else None
+    tok = m.group(1)
+    try:
+        raw = base64.urlsafe_b64decode(tok + "=" * (-len(tok) % 4))
+        u = re.search(rb"https?://[^\x00-\x1f\x7f\"'<> ]+", raw)
+        if u:
+            return u.group(0).decode("utf-8", "ignore")
+    except Exception:
+        pass
+    try:
+        page = requests.get(link, headers={"User-Agent": UA}, timeout=30).text
+        sig = re.search(r'data-n-a-sg="([^"]+)"', page)
+        ts = re.search(r'data-n-a-ts="([^"]+)"', page)
+        if not (sig and ts):
+            return None
+        req = (f'["garturlreq",[["ko","KR",["FINANCE_TOP_INDICES","WEB_TEST_1_0_0"],null,null,1,1,"KR:ko",null,180,'
+               f'null,null,null,null,null,0,null,null,[1608992183,723341000]],"ko","KR",1,[2,3,4,8],1,0,"655000234",0,0,null,0],'
+               f'"{tok}",{ts.group(1)},"{sig.group(1)}"]')
+        resp = requests.post("https://news.google.com/_/DotsSplashUi/data/batchexecute",
+                             data={"f.req": json.dumps([[["Fbv4je", req, None, "generic"]]])},
+                             headers={"User-Agent": UA, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+                             timeout=30).text
+        for line in resp.splitlines():
+            if line.startswith("[["):
+                data = json.loads(line)
+                inner = json.loads(data[0][2])
+                return inner[1]
+    except Exception:
+        return None
+    return None
+
+
+def search_alternatives(query: str, date: str | None, window_days: int = 21, limit: int = 8) -> list[dict]:
+    """같은 사건을 다룬 다른 기사 후보. Google News RSS(날짜 필터 가능) + Bing News RSS(직접 링크, 날짜는 사후 필터)."""
+    import datetime as dt
+    import feedparser
+    import requests
+    out, seen = [], set()
+    q = re.sub(r"[\"'()\[\]–—·,]", " ", query)
+    lo = hi = None
+    if date:
+        d = dt.date.fromisoformat(date[:10])
+        lo, hi = d - dt.timedelta(days=window_days), d + dt.timedelta(days=window_days)
+    try:
+        gq = q + (f" after:{lo.isoformat()} before:{hi.isoformat()}" if date else "")
+        r = requests.get("https://news.google.com/rss/search", params={"q": gq, "hl": "ko", "gl": "KR", "ceid": "KR:ko"},
+                         headers={"User-Agent": UA}, timeout=30)
+        for e in feedparser.parse(r.text).entries[:limit]:
+            out.append({"engine": "google", "link": e.get("link", ""), "title": e.get("title", ""), "published": e.get("published", "")})
+    except requests.RequestException:
+        pass
+    try:
+        r = requests.get("https://www.bing.com/news/search", params={"q": q, "format": "rss"}, headers={"User-Agent": UA}, timeout=30)
+        for e in feedparser.parse(r.text).entries[:limit]:
+            pub = e.get("published_parsed")
+            if date and pub:
+                pd = dt.date(*pub[:3])
+                if not (lo <= pd <= hi):
+                    continue
+            out.append({"engine": "bing", "link": e.get("link", ""), "title": e.get("title", ""), "published": e.get("published", "")})
+    except requests.RequestException:
+        pass
+    uniq = []
+    for c in out:
+        if c["link"] and c["link"] not in seen:
+            seen.add(c["link"])
+            uniq.append(c)
+    return uniq
+
+
+def resolve_input(title: str, date: str | None, source_url: str | None, rss_summary: str = "") -> dict:
+    """유료벽 3단계(연구자 결정 2026-10-22).
+    1) 원문 URL 본문  2) 같은 사건의 다른 무료 출처(보도자료·정부 문서 우선)  3) 제목(+RSS 요약)만, 확신도 상한 0.5.
+    돌려주는 dict 에 코딩에 쓴 원문(text)을 그대로 담는다 — 재현성."""
+    import hashlib as _h
+    tried = []
+
+    def pack(kind, url, via, text, extra=None):
+        rec = {"kind": kind, "url": url, "via": via, "chars": len(text), "sha256": _h.sha256(text.encode("utf-8")).hexdigest(),
+               "text": text, "tried": tried}
+        if extra:
+            rec.update(extra)
+        return rec
+
+    if source_url:
+        body, meta = fetch_body(source_url)
+        tried.append({"step": 1, "url": source_url, "chars": len(body)})
+        if len(body) >= 300:
+            return pack("body", source_url, meta.get("via", "direct"), body, {"meta": meta})
+    cands = search_alternatives(title, date) if title else []
+    picked = []
+    for c in cands[:8]:
+        real = _decode_gnews(c["link"]) if c["engine"] == "google" else c["link"]
+        if not real or any(d in real for d in PAYWALL_DOMAINS) or real == source_url:
+            continue
+        body, meta = fetch_body(real)
+        tried.append({"step": 2, "url": real, "chars": len(body), "title": c.get("title", "")})
+        if len(body) >= 300:
+            grade1 = any(h in real for h in GRADE1_HINTS)
+            picked.append((0 if grade1 else 1, -len(body), real, body, meta))
+            if grade1:
+                break
+    if picked:
+        picked.sort()
+        _, _, real, body, meta = picked[0]
+        return pack("body", real, "alternative:" + meta.get("via", "direct"), body, {"meta": meta, "alternative_of": source_url})
+    text = title + ("\n\n" + rss_summary if rss_summary else "")
+    return pack("title", source_url, "none", text, {"body_missing": True})
+
+
 def clip(body: str, head: int = 6000, tail: int = 2000) -> str:
     # 토큰이 아니라 글자 기준의 느슨한 상한(한글 1자 ≈ 1~2토큰). 8천 자를 넘으면 앞·뒤만 남긴다.
     return body if len(body) <= head + tail else body[:head] + "\n...(중략)...\n" + body[-tail:]
@@ -263,21 +390,22 @@ def cmd_recode(effort: str, limit: int | None) -> int:
     results, calls, usage_total = [], 0, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     started = time.monotonic()
     targets = [e for e in events if e["sources"]][: (limit or None)]
+    inputs_path = DATA / f"ai_coop_recode_inputs_{effort}.jsonl"
+    inputs_fh = inputs_path.open("w", encoding="utf-8")
     for e in targets:
         url = e["sources"][0]["url"]
-        body, meta = fetch_body(url)
-        meta["url"] = url
+        inp = resolve_input(e["title"], e["date"], url)
         rec = {"id": e["id"], "title": e["title"], "url": url, "in_examples": e["title"] in EXAMPLE_TITLES,
                "truth": {"form": e["form"], "track": e["track"], "sectors": e["sectors"],
-                         "us": e["us_parties"], "kr": e["kr_parties"], "amount": e["amount_usd_bn"], "date": e["date"]}}
-        rec["via"] = meta.get("via")
-        if len(body) < 300:
-            rec["fetch"] = "failed"; rec["body_chars"] = len(body)
-            results.append(rec); print(f"  [본문 실패] {e['date']} {e['title'][:40]} ({len(body)}자)"); continue
+                         "us": e["us_parties"], "kr": e["kr_parties"], "amount": e["amount_usd_bn"], "date": e["date"]},
+               "input": {k: v for k, v in inp.items() if k not in ("text", "meta")} | {"excerpt": inp["text"][:500]}}
+        inputs_fh.write(json.dumps({"id": e["id"], "kind": inp["kind"], "url": inp["url"], "via": inp["via"],
+                                    "sha256": inp["sha256"], "text": inp["text"]}, ensure_ascii=False) + "\n")
         if calls >= MAX_CALLS:
             rec["fetch"] = "skipped_max_calls"; results.append(rec); continue
+        meta = dict(inp.get("meta") or {}); meta["url"] = inp["url"] or url
         try:
-            pred, usage = code_article(client, system, meta, clip(body), effort)
+            pred, usage = code_article(client, system, meta, clip(inp["text"]), effort, kind=inp["kind"])
         except anthropic.APIStatusError as exc:
             rec["fetch"] = "ok"; rec["error"] = f"{exc.status_code} {exc.message}"; results.append(rec)
             print(f"  [API 오류] {exc.status_code} {str(exc.message)[:160]}")
@@ -285,8 +413,11 @@ def cmd_recode(effort: str, limit: int | None) -> int:
                 print("  400 오류 3회 — 요청 형식 문제로 보고 중단"); break
             continue
         calls += 1
-        for k in usage_total: usage_total[k] += usage[k]
-        rec["fetch"] = "ok"; rec["body_chars"] = len(body); rec["pred"] = pred
+        for k in usage_total:
+            usage_total[k] += usage[k]
+        if inp["kind"] == "title" and isinstance(pred.get("confidence"), (int, float)):
+            pred["confidence"] = min(pred["confidence"], 0.5)
+        rec["fetch"] = inp["kind"]; rec["pred"] = pred
         rec["match"] = {
             "is_event": bool(pred.get("is_event")),
             "form": pred.get("form") == e["form"], "track": pred.get("track") == e["track"],
@@ -298,9 +429,10 @@ def cmd_recode(effort: str, limit: int | None) -> int:
         }
         results.append(rec)
         m = rec["match"]
-        print(f"  {e['date']} {e['title'][:34]:<34} form {'O' if m['form'] else 'X'}({pred.get('form')}) track {'O' if m['track'] else 'X'} "
-              f"sec {m['sectors_jaccard']} us {m['us_jaccard']} kr {m['kr_jaccard']} amt {'O' if m['amount'] else 'X'} conf {pred.get('confidence')}")
+        print(f"  {e['date']} {e['title'][:30]:<30} [{inp['kind']:<5} {inp['via'][:14]:<14}] form {'O' if m['form'] else 'X'}({pred.get('form')}) "
+              f"track {'O' if m['track'] else 'X'} sec {m['sectors_jaccard']} us {m['us_jaccard']} kr {m['kr_jaccard']} amt {'O' if m['amount'] else 'X'} conf {pred.get('confidence')}")
         time.sleep(0.5)
+    inputs_fh.close()
 
     coded = [r for r in results if "match" in r]
     held = [r for r in coded if not r["in_examples"]]
@@ -308,12 +440,14 @@ def cmd_recode(effort: str, limit: int | None) -> int:
     def mean(rs, key): return (sum(r["match"][key] for r in rs) / len(rs)) if rs else None
     summary = {
         "effort": effort, "model": MODEL, "targets": len(targets), "fetched": len(coded),
-        "fetch_failed": sum(1 for r in results if r.get("fetch") == "failed"),
+        "input_kinds": {k: sum(1 for r in results if r.get("fetch") == k) for k in ("body", "title")},
         "errors": sum(1 for r in results if "error" in r), "calls": calls, "usage": usage_total,
         "cost_usd": round(usage_total["input"] * 4 / 1e6 + usage_total["output"] * 20 / 1e6
                           + usage_total["cache_read"] * 0.2 / 1e6 + usage_total["cache_write"] * 5 / 1e6, 3),
         "seconds": round(time.monotonic() - started),
         "heldout_n": len(held),
+        "heldout_by_kind": {k: {"n": sum(1 for r in held if r["fetch"] == k),
+                                "form": rate([r for r in held if r["fetch"] == k], "form")} for k in ("body", "title")},
         "heldout": {"form": rate(held, "form"), "track": rate(held, "track"), "sectors_jaccard": mean(held, "sectors_jaccard"),
                     "us_jaccard": mean(held, "us_jaccard"), "kr_jaccard": mean(held, "kr_jaccard"), "amount": rate(held, "amount"),
                     "date": rate(held, "date"), "is_event": rate(held, "is_event")},
@@ -327,17 +461,15 @@ def cmd_recode(effort: str, limit: int | None) -> int:
         h = summary["heldout"]
         with open(step, "a", encoding="utf-8") as fh:
             fh.write(f"## 한미 AI 협력 — 표본 재코딩 ({effort})\n\n"
-                     f"- 대상 {summary['targets']}건, 본문 확보 {summary['fetched']}건, 실패 {summary['fetch_failed']}건, 호출 {calls}회, 비용 ${summary['cost_usd']}\n"
+                     f"- 대상 {summary['targets']}건, 코딩 {summary['fetched']}건(본문 {summary['input_kinds']['body']} · 제목만 {summary['input_kinds']['title']}), 호출 {calls}회, 비용 ${summary['cost_usd']}\n"
+                     f"- 입력 종류별 form 일치율(보류 표본): {summary['heldout_by_kind']}\n"
                      f"- 보류 표본(예시 제외) {summary['heldout_n']}건 일치율: form {h['form']}, track {h['track']}, sectors J {h['sectors_jaccard']}, "
                      f"미국 주체 J {h['us_jaccard']}, 한국 주체 J {h['kr_jaccard']}, 금액 {h['amount']}, 날짜 {h['date']}\n\n"
-                     "| 날짜 | 사건 | form 정답 | form 예측 | track | sectors J | conf |\n|---|---|---|---|---|---|---|\n")
+                     "| 날짜 | 사건 | 입력 | form 정답 | form 예측 | track | sectors J | conf |\n|---|---|---|---|---|---|---|---|\n")
             for r in coded:
                 m, p = r["match"], r["pred"]
-                fh.write(f"| {r['truth']['date']} | {r['title'][:40]}{' (예시)' if r['in_examples'] else ''} | {r['truth']['form']} | {p.get('form')} | "
+                fh.write(f"| {r['truth']['date']} | {r['title'][:40]}{' (예시)' if r['in_examples'] else ''} | {r['fetch']}/{r['input']['via'][:12]} | {r['truth']['form']} | {p.get('form')} | "
                          f"{'O' if m['track'] else 'X'} | {m['sectors_jaccard']} | {p.get('confidence')} |\n")
-            failed = [r for r in results if r.get("fetch") == "failed"]
-            if failed:
-                fh.write("\n본문 확보 실패: " + ", ".join(f"{r['title'][:30]}" for r in failed) + "\n")
     return 0
 
 
