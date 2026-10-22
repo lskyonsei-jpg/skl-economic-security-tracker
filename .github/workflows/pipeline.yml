@@ -35,7 +35,7 @@ on:
       ai_coop:
         description: "한미 AI 협력: 표본 재코딩 검증 (Claude API 비용 발생)"
         type: choice
-        options: [none, recode-high, recode-medium]
+        options: [none, recode-medium, recode-high]
         default: none
 
 permissions:

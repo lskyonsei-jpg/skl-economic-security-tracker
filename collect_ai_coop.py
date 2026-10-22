@@ -5,7 +5,7 @@
                                                        표본 사건의 원문을 다시 받아 Task A 로 코딩하고 연구자 코딩과 대조
   (예정) discover / run                                 신규 기사 탐지 -> Task A/B -> 병합 -> 게시
 
-모델: claude-opus-5-5, effort high (연구자 확정 2026-10-22). 구조화 출력(output_config.format)으로 스키마를 강제한다.
+모델: claude-opus-5-5, effort medium (연구자 확정 2026-10-22, 비교 실험 없이 medium 으로). 구조화 출력(output_config.format)으로 스키마를 강제한다.
 프롬프트 v2(2026-10-22): form 은 문서의 법적 성격 기준, track 은 정부-정부/정부-민간/민간-민간, 금액은 거래금액만,
 기사 하나에 사건 여러 개(events 배열), 기관 표기는 reference/ai_coop_orgs.csv 의 표준 표기.
 키:   환경변수 ANTHROPIC_API_KEY (GitHub Secrets). 로컬에는 없으므로 recode 는 CI 에서 돈다.
@@ -577,7 +577,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("seed")
-    r = sub.add_parser("recode"); r.add_argument("--effort", default="high", choices=["low", "medium", "high"]); r.add_argument("--limit", type=int)
+    r = sub.add_parser("recode"); r.add_argument("--effort", default="medium", choices=["low", "medium", "high"]); r.add_argument("--limit", type=int)
     a = p.parse_args()
     if a.cmd == "seed":
         return cmd_seed()
