@@ -6,8 +6,8 @@
 원칙
 - 확정 코딩은 연구자가 Notion 에서 한다. 여기서는 읽기·집계·표시만 한다(자동 탐지·LLM 초벌 코딩은 범위 밖).
 - Notion 열 이름은 PROPERTY_ALIASES 로 찾는다. 열 이름이 바뀌면 여기만 고친다. 못 찾은 열은 비워 두고 로그에 남긴다.
-- `Drive 원본` 같은 내부 링크는 내보내지 않는다. 공개 JSON 에는 날짜·주체·유형·형태·분야·내용·규모(원문 그대로)·원문 URL·상태만 들어간다.
-- 금액은 합산하지 않는다. `규모` 한 칸은 통화·명목/추정이 섞여 있어 더할 수 없다(로드맵 3-3). 원문 그대로 보여 준다.
+- `드라이브 링크` 같은 내부 링크는 내보내지 않는다. 공개 JSON 에는 날짜·주체·유형·형태·분야·내용·규모(원문 그대로)·원문 URL·상태만 들어간다.
+- 금액(규모, 억 달러)은 아직 합산하지 않는다. 명목/추정 구분 열이 없어서다. 원문 그대로 보여 준다.
 - 분석 단위는 '사건(행)' 하나. count 와 share 를 같이 쓰고 분모는 전체 사건 수다.
 """
 from __future__ import annotations
@@ -26,16 +26,18 @@ NOTION_VERSION = "2022-06-28"
 
 # 화면 필드 -> Notion 열 이름 후보(앞에서부터 먼저 맞는 것). 로드맵 3절의 현재 열 이름 기준.
 PROPERTY_ALIASES: dict[str, list[str]] = {
-    "date": ["날짜", "일자", "Date"],
-    "us": ["미국 측 주체", "미국측 주체", "미국 주체", "US"],
-    "kr": ["한국 측 주체", "한국측 주체", "한국 주체", "KR"],
-    "actor_type": ["주체유형", "주체 유형"],
+    # 2026-10-22 실제 DB(한미 AI 협력 DB) 열: 일자 · 미국 주체 · 한국 주체 · 원문 링크 · 드라이브 링크 · 트랙 · 형태 · 분야 · 내용 · 규모(억 달러) · 비고
+    "date": ["일자", "날짜", "Date"],
+    "us": ["미국 주체", "미국 측 주체", "미국측 주체", "US"],
+    "kr": ["한국 주체", "한국 측 주체", "한국측 주체", "KR"],
+    "actor_type": ["트랙", "주체유형", "주체 유형"],
     "form": ["형태"],
     "sector": ["분야"],
     "content": ["내용", "제목", "Name", "이름"],
-    "amount": ["규모", "금액"],
-    "url": ["원문 URL", "원문", "URL", "출처"],
+    "amount": ["규모(억 달러)", "규모", "금액"],
+    "url": ["원문 링크", "원문 URL", "원문", "URL", "출처"],
     "status": ["상태"],
+    "note": ["비고"],
 }
 FORM_ORDER = ["MOU·의향", "선언", "집행", "확정계약"]
 # 미국 행정부 경계(타임라인 세로선). 취임일 기준.
@@ -146,6 +148,7 @@ def normalize(raw: dict) -> tuple[list[dict], dict]:
             "amount": (str(_pick(p, "amount")) if _pick(p, "amount") not in (None, "") else ""),
             "url": _pick(p, "url") or "",
             "status": _pick(p, "status") or "",
+            "note": (_pick(p, "note") or "").strip(),
         })
     events.sort(key=lambda e: (e["date"], e["content"]))
     return events, {"dropped_no_date": dropped, "unmapped_columns": dict(unmapped)}
