@@ -72,7 +72,7 @@ function linreg(pts){const n=pts.length;if(n<2)return null;const mx=pts.reduce((
 // 아닌 잡음을 x축과 무관하게 y축에 실어 나른다. 분수는 전부 뺀다.
 // 지도·순위·추이의 risk_index는 정의상 비중 × 거리이므로 그대로 둔다.
 // 산점도는 ip_sectors.json(조치 단위 원자료)에서 매번 다시 집계한다(2026-08-24).
-// 기본으로 중복 접기(#DUP_RULE_20260824)만 걸고(부처별 하드코딩 예외는 없앴다),
+// 기본으로 중복 묶기(#DUP_RULE_20260824)만 걸고(부처별 하드코딩 예외는 없앴다),
 // 화면에서 시행 수준(지방정부 제외)과 산업(HS4)을 추가로 걸 수 있다.
 const IMP_CODE={'United States of America':0,'China':1};
 function exposedCounts(imp,yFrom,yTo){const code=IMP_CODE[imp],sel=state.hs2,hasSel=sel.size>0;const out={};for(const m of SEC.measures){if(m.m!==code||m.y<yFrom||m.y>yTo||m.x)continue;if(state.targetedOnly&&!m.t)continue;if(hasSel&&!m.h.some(h=>sel.has(h)))continue;for(const iso of m.a)out[iso]=(out[iso]||0)+1}return out}

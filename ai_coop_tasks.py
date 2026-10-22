@@ -223,7 +223,7 @@ def dedup_proposals(new: list[dict], pending_old: list[dict]) -> list[dict]:
         # 대표보다 강한 form 이 나오면 메모에 남긴다(바꾸지는 않는다)
         if p["payload"].get("form") != home["payload"].get("form"):
             home.setdefault("form_variants", []).append(p["payload"].get("form"))
-    print(f"[A] 중복 접기: {len(new)}건 -> {len(kept)}건 (이전 미결에 합쳐진 것 {len(new) - len(kept) - sum(len(k.get('extra_sources', [])) for k in kept)}건)")
+    print(f"[A] 중복 묶기: {len(new)}건 -> {len(kept)}건 (이전 미결에 합쳐진 것 {len(new) - len(kept) - sum(len(k.get('extra_sources', [])) for k in kept)}건)")
     return kept
 
 
@@ -580,7 +580,7 @@ def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
 
 def cmd_apply(today: str) -> int:
     state = load_state(); doc = load_events()
-    # 미결 A 제안 중 같은 거래는 하나로 접는다(예전 실행이 남긴 중복 정리)
+    # 미결 A 제안 중 같은 거래는 하나로 묶는다(예전 실행이 남긴 중복 정리)
     pending_a = [p for p in state["proposals"] if p["task"] == "A" and p["status"] == "proposed"]
     kept_ids = {k["id"] for k in dedup_proposals(pending_a, [])}
     merged = 0
