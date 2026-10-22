@@ -1,7 +1,0 @@
-ai_coop_events.json https://github.com/lskyonsei-jpg/skl-economic-security-tracker/releases/download/state/ai_coop_events.json
-ai_coop_state.json https://github.com/lskyonsei-jpg/skl-economic-security-tracker/releases/download/state/ai_coop_state.json
-logs.tar.gz https://github.com/lskyonsei-jpg/skl-economic-security-tracker/releases/download/state/logs.tar.gz
-master.parquet https://github.com/lskyonsei-jpg/skl-economic-security-tracker/releases/download/state/master.parquet
-prediction_cache.json https://github.com/lskyonsei-jpg/skl-economic-security-tracker/releases/download/state/prediction_cache.json
-reference.tar.gz https://github.com/lskyonsei-jpg/skl-economic-security-tracker/releases/download/state/reference.tar.gz
-state.json https://github.com/lskyonsei-jpg/skl-economic-security-tracker/releases/download/state/state.json
