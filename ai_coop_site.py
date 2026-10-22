@@ -186,8 +186,8 @@ def aggregate(events: list[dict]) -> dict:
 
 def nav(current: str) -> str:
     links = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"), ("data.html", "Data")]
-    items = "".join(
-        f'<a href="{h}"{" aria-current=\"page\"" if h == current else ""}>{t}</a>' for h, t in links)
+    cur = ' aria-current="page"'
+    items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in links)
     return (f'<nav class="site-nav"><div class="wrap"><a class="brand" href="index.html">'
             f'<span class="mark"></span>SKL Economic Security Tracker</a><div class="links">{items}</div></div></nav>')
 
