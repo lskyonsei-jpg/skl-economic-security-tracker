@@ -133,19 +133,19 @@ OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
         "is_event": {"type": "boolean"},
-        "date": {"type": ["string", "null"], "description": "YYYY-MM-DD"},
+        "date": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "YYYY-MM-DD"},
         "us_parties": {"type": "array", "items": {"type": "string"}},
         "kr_parties": {"type": "array", "items": {"type": "string"}},
-        "track": {"type": ["string", "null"], "enum": TRACKS + [None]},
-        "form": {"type": ["string", "null"], "enum": FORMS + [None]},
+        "track": {"anyOf": [{"type": "string", "enum": TRACKS}, {"type": "null"}]},
+        "form": {"anyOf": [{"type": "string", "enum": FORMS}, {"type": "null"}]},
         "sectors": {"type": "array", "items": {"type": "string", "enum": SECTORS}},
         "title": {"type": "string"},
         "summary": {"type": "string"},
-        "amount_usd_bn": {"type": ["number", "null"]},
+        "amount_usd_bn": {"anyOf": [{"type": "number"}, {"type": "null"}]},
         "amount_is_estimate": {"type": "boolean"},
-        "amount_krw_bn": {"type": ["number", "null"]},
+        "amount_krw_bn": {"anyOf": [{"type": "number"}, {"type": "null"}]},
         "source_grade": {"type": "integer", "enum": [1, 2]},
-        "prior_event_hint": {"type": ["string", "null"]},
+        "prior_event_hint": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "confidence": {"type": "number"},
         "note": {"type": "string"},
     },
@@ -192,16 +192,45 @@ def code_article(client, system: str, meta: dict, body: str, effort: str) -> tup
 # ------------------------------------------------------------------ 본문 수집
 
 
-def fetch_body(url: str) -> tuple[str, dict]:
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+      "Chrome/130.0.0.0 Safari/537.36")
+
+
+def _extract(html_text: str, url: str) -> tuple[str, dict]:
     import trafilatura
-    downloaded = trafilatura.fetch_url(url)
-    if not downloaded:
-        return "", {}
-    text = trafilatura.extract(downloaded, include_comments=False, favor_recall=True) or ""
-    meta = trafilatura.extract_metadata(downloaded)
+    text = trafilatura.extract(html_text, include_comments=False, favor_recall=True, url=url) or ""
+    meta = trafilatura.extract_metadata(html_text, default_url=url)
+    domain = re.sub(r"^https?://([^/]+).*$", lambda m: m.group(1), url)
     info = {"title": getattr(meta, "title", "") or "", "published": getattr(meta, "date", "") or "",
-            "domain": getattr(meta, "sitename", "") or re.sub(r"^https?://([^/]+).*$", r"\1", url)}
+            "domain": getattr(meta, "sitename", "") or domain}
     return text.strip(), info
+
+
+def fetch_body(url: str) -> tuple[str, dict]:
+    """본문 추출. 1) 브라우저 UA 직접 요청, 2) 실패·차단·짧음이면 Wayback Machine 스냅숏.
+    어느 쪽을 썼는지 info['via'] 에 남긴다. 원문은 저장하지 않는다."""
+    import requests
+    best, best_info = "", {}
+    try:
+        r = requests.get(url, headers={"User-Agent": UA, "Accept-Language": "ko,en;q=0.8"}, timeout=30)
+        if r.status_code == 200 and r.text:
+            best, best_info = _extract(r.text, url); best_info["via"] = "direct"
+    except requests.RequestException:
+        pass
+    if len(best) >= 300:
+        return best, best_info
+    try:
+        avail = requests.get("https://archive.org/wayback/available", params={"url": url}, timeout=30).json()
+        snap = (avail.get("archived_snapshots") or {}).get("closest") or {}
+        if snap.get("available") and snap.get("url"):
+            r = requests.get(snap["url"], headers={"User-Agent": UA}, timeout=60)
+            if r.status_code == 200:
+                text, info = _extract(r.text, url); info["via"] = f"wayback:{snap.get('timestamp', '')[:8]}"
+                if len(text) > len(best):
+                    best, best_info = text, info
+    except (requests.RequestException, ValueError):
+        pass
+    return best, best_info
 
 
 def clip(body: str, head: int = 6000, tail: int = 2000) -> str:
@@ -241,6 +270,7 @@ def cmd_recode(effort: str, limit: int | None) -> int:
         rec = {"id": e["id"], "title": e["title"], "url": url, "in_examples": e["title"] in EXAMPLE_TITLES,
                "truth": {"form": e["form"], "track": e["track"], "sectors": e["sectors"],
                          "us": e["us_parties"], "kr": e["kr_parties"], "amount": e["amount_usd_bn"], "date": e["date"]}}
+        rec["via"] = meta.get("via")
         if len(body) < 300:
             rec["fetch"] = "failed"; rec["body_chars"] = len(body)
             results.append(rec); print(f"  [본문 실패] {e['date']} {e['title'][:40]} ({len(body)}자)"); continue
@@ -249,7 +279,11 @@ def cmd_recode(effort: str, limit: int | None) -> int:
         try:
             pred, usage = code_article(client, system, meta, clip(body), effort)
         except anthropic.APIStatusError as exc:
-            rec["fetch"] = "ok"; rec["error"] = f"{exc.status_code} {exc.message}"; results.append(rec); continue
+            rec["fetch"] = "ok"; rec["error"] = f"{exc.status_code} {exc.message}"; results.append(rec)
+            print(f"  [API 오류] {exc.status_code} {str(exc.message)[:160]}")
+            if exc.status_code == 400 and sum(1 for x in results if str(x.get("error", "")).startswith("400")) >= 3:
+                print("  400 오류 3회 — 요청 형식 문제로 보고 중단"); break
+            continue
         calls += 1
         for k in usage_total: usage_total[k] += usage[k]
         rec["fetch"] = "ok"; rec["body_chars"] = len(body); rec["pred"] = pred
