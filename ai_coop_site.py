@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -21,9 +22,28 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 EVENTS = HERE / "data" / "ai_coop_events.json"
 REPO = "lskyonsei-jpg/skl-economic-security-tracker"
-FORM_ORDER = ["MOU·의향", "선언", "집행", "확정계약"]
+FORM_ORDER = ["선언", "MOU·의향", "집행", "확정계약"]   # 약한 것부터 (연구자 지시 2026-10-22)
 # 미국 행정부 경계(타임라인 세로선). 취임일 기준.
 ADMINISTRATIONS = [("오바마", "2009-01-20"), ("트럼프 1기", "2017-01-20"), ("바이든", "2021-01-20"), ("트럼프 2기", "2025-01-20")]
+
+
+GOV_RE = re.compile(r"^정부\((.+)\)$")
+
+
+def disp(name: str) -> str:
+    """화면 표기. 자료의 표준 표기 '정부(미국)' 은 그대로 두고(모델 프롬프트·중복 판정이 이 표기를 쓴다) 화면에서만 '미국(정부)' 로 보인다."""
+    m = GOV_RE.match(name or "")
+    return f"{m.group(1)}(정부)" if m else name
+
+
+def load_orgs() -> dict:
+    """기관 표기 목록(reference/ai_coop_orgs.csv) → {화면 표기: {country, type}}."""
+    import csv
+    path = HERE / "reference" / "ai_coop_orgs.csv"
+    if not path.is_file():
+        return {}
+    with path.open(encoding="utf-8", newline="") as f:
+        return {disp(r["canonical"]): {"country": r.get("country", ""), "type": r.get("type", "")} for r in csv.DictReader(f)}
 
 
 def load_events() -> tuple[list[dict], dict]:
@@ -42,13 +62,14 @@ def load_events() -> tuple[list[dict], dict]:
         amt = e.get("amount_usd_bn")
         events.append({
             "id": e["id"], "date": e["date"][:10],
-            "us": e.get("us_parties", []), "kr": e.get("kr_parties", []),
+            "us": [disp(x) for x in e.get("us_parties", [])], "kr": [disp(x) for x in e.get("kr_parties", [])],
             "actor_type": e.get("track") or "미분류", "form": e.get("form") or "미분류",
             "sector": e.get("sectors") or ["미분류"],
             "content": e.get("title", ""), "summary": e.get("summary", ""),
             "amount": (f"{amt:g}억 달러" + (" (추정)" if e.get("amount_is_estimate") else "")) if amt is not None else "",
             "amount_usd_bn": amt,
-            "url": (e.get("sources") or [{}])[0].get("url", ""),
+            "url": (e.get("sources") or [{}])[0].get("url", ""), "sources": [x.get("url", "") for x in (e.get("sources") or []) if x.get("url")],
+            "updates": e.get("updates", []), "coded_by": e.get("coded_by", ""),
             "source_grade": (e.get("sources") or [{}])[0].get("grade"),
             "status": e.get("status", "auto"), "lifecycle": e.get("lifecycle", ""),
             "confidence": e.get("confidence"), "administration": e.get("administration", ""),
@@ -162,7 +183,7 @@ def render(agg: dict, meta: dict) -> str:
   <section class="section">
     <span class="eyebrow">Records</span>
     <div class="panel"><details class="records-toggle" id="records-box"><summary><span class="btn small"></span><span>사건 목록 {n}건 (최신순)</span><input id="q" type="search" placeholder="검색" onclick="event.preventDefault()"></summary>
-      <div class="tablebox"><table id="records"><thead><tr><th>날짜</th><th>상태</th><th>형태</th><th>분야</th><th>미국 측</th><th>한국 측</th><th>내용</th><th>규모</th><th>원문</th></tr></thead><tbody></tbody></table></div></details></div>
+      <div class="tablebox"><div id="org-card"></div><table id="records"><thead><tr><th>날짜</th><th>제목</th><th>형태</th><th>분야</th><th>미국 측</th><th>한국 측</th><th>규모</th><th>상태</th></tr></thead><tbody></tbody></table></div></details></div>
   </section>
 </div>
 <script>
@@ -187,7 +208,23 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`<b>${{e.date}} · ${{e.form}}</b><br>${{e.content}}<br><span style="opacity:.8">${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}${{e.amount?' · '+e.amount:''}}</span>`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
   svg.addEventListener('mouseleave',()=>tip.style.display='none');
   const tb=document.querySelector('#records tbody'); const esc=t=>String(t).replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}})[c]);
-  const draw=q=>{{const qq=(q||'').toLowerCase(); tb.innerHTML=[...E].reverse().filter(e=>!qq||JSON.stringify(e).toLowerCase().includes(qq)).map(e=>`<tr><td class="d">${{e.date}}</td><td><span class="chip" style="cursor:default">${{e.status==='confirmed'?'확정':'자동'}}</span></td><td>${{esc(e.form)}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{esc(e.us.join(', '))}}</td><td>${{esc(e.kr.join(', '))}}</td><td>${{esc(e.content)}}</td><td>${{esc(e.amount)}}</td><td>${{e.url?`<a href="${{esc(e.url)}}" target="_blank" rel="noopener">원문</a>`:''}}</td></tr>`).join('');}};
+  const ORGS=D.orgs||{{}}; let orgSel=null;
+  const orgLink=n=>`<a href="#" class="org" data-org="${{esc(n)}}">${{esc(n)}}</a>`;
+  const detail=e=>{{const ups=(e.updates||[]).map(u=>`<li>${{esc(u.date||'')}} ${{esc(u.field||u.kind||'')}}${{u.old!==undefined?` ${{esc(u.old)}} → ${{esc(u.new)}}`:''}}${{u.evidence?` <span class="small">${{esc(u.evidence)}}</span>`:''}}</li>`).join('');
+    const srcs=(e.sources||[]).map((u,i)=>`<a href="${{esc(u)}}" target="_blank" rel="noopener">원문${{i?i+1:''}}</a>`).join(' · ');
+    return `<div class="ev-detail"><div class="ev-grid"><span>구분</span><span>${{esc(e.actor_type)}} · ${{e.status==='confirmed'?'연구자 확정':'모델 코딩'}}${{e.lifecycle?' · 진행 '+esc(e.lifecycle):''}}${{e.administration?' · '+esc(e.administration):''}}</span>`+
+      (e.summary?`<span>요약</span><span>${{esc(e.summary)}}</span>`:'')+(e.note?`<span>비고</span><span>${{esc(e.note)}}</span>`:'')+(e.amount?`<span>규모</span><span>${{esc(e.amount)}}</span>`:'')+
+      (e.prior_event_id?`<span>선행</span><span>${{esc((E.find(x=>x.id===e.prior_event_id)||{{}}).content||e.prior_event_id)}}</span>`:'')+
+      (ups?`<span>후속 갱신</span><span><ul class="ev-updates">${{ups}}</ul></span>`:'')+(srcs?`<span>출처</span><span>${{srcs}}</span>`:'')+`</div></div>`;}};
+  const draw=q=>{{const qq=(q||'').toLowerCase(); const rows=[...E].reverse().filter(e=>(!orgSel||e.us.includes(orgSel)||e.kr.includes(orgSel))&&(!qq||JSON.stringify(e).toLowerCase().includes(qq)));
+    tb.innerHTML=rows.map((e,i)=>`<tr class="ev-row" data-i="${{i}}"><td class="d">${{e.date}}</td><td><a href="#" class="ev-title">${{esc(e.content)}}</a></td><td>${{esc(e.form)}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{e.us.map(orgLink).join(', ')}}</td><td>${{e.kr.map(orgLink).join(', ')}}</td><td>${{esc(e.amount)}}</td><td><span class="chip" style="cursor:default">${{e.status==='confirmed'?'확정':'자동'}}</span></td></tr><tr class="ev-more" hidden><td colspan="8">${{detail(e)}}</td></tr>`).join('');
+    const card=document.getElementById('org-card');
+    if(orgSel){{const o=ORGS[orgSel]||{{}}; const forms={{}}; rows.forEach(e=>forms[e.form]=(forms[e.form]||0)+1); const partners={{}}; rows.forEach(e=>(e.us.includes(orgSel)?e.kr:e.us).forEach(p=>partners[p]=(partners[p]||0)+1));
+      card.innerHTML=`<div class="org-box"><b>${{esc(orgSel)}}</b> <span class="small">${{o.type?esc(o.type)+' · ':''}}${{o.country?esc(o.country)+' · ':''}}사건 ${{rows.length}}건 · ${{FORMS.filter(f=>forms[f]).map(f=>f+' '+forms[f]).join(' · ')}}</span><br><span class="small">상대: ${{Object.entries(partners).sort((a,b)=>b[1]-a[1]).map(([p,n])=>orgLink(p)+' '+n).join(', ')||'-'}}</span> <button class="btn small" id="org-clear" type="button">전체 보기</button></div>`;
+      document.getElementById('org-clear').onclick=()=>{{orgSel=null;draw(q);}};}} else card.innerHTML='';}};
+  tb.addEventListener('click',ev=>{{const t=ev.target.closest('a.ev-title'); if(t){{ev.preventDefault(); const more=t.closest('tr').nextElementSibling; more.hidden=!more.hidden; return;}}
+    const o=ev.target.closest('a.org'); if(o){{ev.preventDefault(); orgSel=o.dataset.org; draw(document.getElementById('q').value); document.getElementById('records-box').open=true; document.getElementById('org-card').scrollIntoView({{block:'nearest'}});}}}});
+  document.getElementById('org-card').addEventListener('click',ev=>{{const o=ev.target.closest('a.org'); if(o){{ev.preventDefault(); orgSel=o.dataset.org; draw(document.getElementById('q').value);}}}});
   draw(''); const q=document.getElementById('q'); q.addEventListener('input',ev=>{{draw(ev.target.value); if(ev.target.value) document.getElementById('records-box').open=true;}});
 }});
 </script>'''
@@ -254,7 +291,7 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
             if k == "A":
                 ev = p["payload"]
                 extra = (f'<p class="small">기존 사건과 중복 가능: {_esc(p.get("possible_duplicate_of"))}</p>' if p.get("possible_duplicate_of") else "") + \
-                        (f'<p class="small">마스터에 없는 기관: {_esc(", ".join(p.get("unknown_orgs", [])))}</p>' if p.get("unknown_orgs") else "")
+                        (f'<p class="small">기관 목록(reference/ai_coop_orgs.csv)에 없는 표기: {_esc(", ".join(p.get("unknown_orgs", [])))}</p>' if p.get("unknown_orgs") else "")
                 more = p.get("extra_sources") or []
                 if more:
                     extra += '<p class="small">같은 거래를 다룬 다른 기사 ' + str(len(more)) + '건: ' + " · ".join(
@@ -262,7 +299,7 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                 if p.get("form_variants"):
                     extra += f'<p class="small">다른 기사의 form 판정: {_esc(", ".join(sorted(set(p["form_variants"]))))}</p>'
                 title, meta = _esc(ev.get("title")), ev_line(ev)
-                body = (f'<p>미국 측 {_esc(", ".join(ev.get("us_parties", [])))} / 한국 측 {_esc(", ".join(ev.get("kr_parties", [])))}</p>'
+                body = (f'<p>미국 측 {_esc(", ".join(disp(x) for x in ev.get("us_parties", [])))} / 한국 측 {_esc(", ".join(disp(x) for x in ev.get("kr_parties", [])))}</p>'
                         f'<p>{_esc(ev.get("summary"))}</p><p class="note">모델 메모: {_esc(ev.get("note"))}</p>{extra}')
             elif k == "B":
                 pl = p["payload"]; tgt = events_by_id.get(p.get("target_id"), {})
@@ -290,9 +327,9 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
     howto = ('<section class="section"><div class="wrap"><details><summary>제출 방법</summary><p class="note">'
              '카드마다 승인·기각·보류를 고르고, 고칠 내용이 있으면 의견란에 적습니다. "GitHub으로 제출"을 누르면 내용이 채워진 GitHub Issue 화면이 열리고, 거기서 등록 버튼만 누르면 됩니다(GitHub 로그인 필요). '
              '다음 날 06:00 자동 실행이 반영합니다. 승인은 그대로, 의견에 수정 지시가 있으면 고쳐서 반영하고, 기각은 기록만 남깁니다. 보류는 다음 날에도 남습니다. '
-             '선택은 이 브라우저에 임시 저장됩니다. <code>data/ai_coop_decisions.csv</code>를 직접 고쳐도 됩니다.</p></details></div></section>')
+             '선택은 이 브라우저에 임시 저장됩니다.</p></details></div></section>')
     submit_bar = ('<div class="submit-bar"><span id="decided-count">선택 0건</span><span class="hint">제출하면 선택이 초기화됩니다</span>'
-                  '<span><button class="btn" id="clear-decisions" type="button">초기화</button> <button class="btn" id="copy-csv" type="button">CSV 복사</button> '
+                  '<span><button class="btn" id="clear-decisions" type="button">초기화</button> '
                   '<button class="btn solid" id="submit-decisions" type="button">GitHub으로 제출</button></span></div>')
     script = """
 <script>
@@ -314,8 +351,6 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
     const today=new Date().toISOString().slice(0,10); const body='## 결정 '+today+'\\n\\n'+L.join('\\n')+'\\n\\n(판단 대기 페이지에서 제출. 다음 자동 실행 때 반영됩니다.)';
     const url='https://github.com/'+REPO+'/issues/new?labels=ai-coop-decision&title='+encodeURIComponent('[결정] '+today)+'&body='+encodeURIComponent(body);
     window.open(url,'_blank'); D={}; save(D); cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false); c.querySelector('textarea').value='';}); count();});
-  document.getElementById('copy-csv').addEventListener('click',()=>{const rows=Object.entries(D).filter(([id,d])=>d.decision).map(([id,d])=>id+','+d.decision+',"'+(d.note||'').replace(/"/g,'""')+'",'+new Date().toISOString().slice(0,10));
-    navigator.clipboard.writeText(rows.join('\\n')).then(()=>alert(rows.length+'줄 복사. data/ai_coop_decisions.csv에 붙여 넣으면 됩니다.'));});
   document.getElementById('clear-decisions').addEventListener('click',()=>{D={};save(D);cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false);c.querySelector('textarea').value='';});count();});
 })();
 </script>""" % json.dumps(REPO)
@@ -329,7 +364,7 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
 def build(out: Path) -> bool:
     events, meta = load_events()
     agg = aggregate(events)
-    (out / "ai_coop.json").write_text(json.dumps({"as_of": meta["as_of"], "n": agg["n"], "events": events, "agg": agg},
+    (out / "ai_coop.json").write_text(json.dumps({"as_of": meta["as_of"], "n": agg["n"], "events": events, "agg": agg, "orgs": load_orgs()},
                                                  ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (out / "ai_coop.html").write_text(render(agg, {"fetched_at": meta["as_of"]}), encoding="utf-8")
     props = pending_proposals()

@@ -3,7 +3,7 @@
    0.8px 외곽선 버튼(모서리 0), 넓은 여백. 한글은 Noto Sans KR 로 떨어진다.
    모든 화면(index, 패널 1·2)이 이 파일 하나를 읽는다. 화면별 CSS 는 여기 토큰만 쓴다. */
 
-@import url("https://fonts.googleapis.com/css2?family=Gudea:wght@400;700&family=Noto+Sans+KR:wght@400;500;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Gudea:wght@400;700&family=Noto+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@600;700&display=swap");
 
 :root {
   /* 바탕·면·선 */
@@ -24,6 +24,8 @@
   --coral-deep: #d9573f;
   --sky: #6dd0f8;
   --navy: #111827;             /* 푸터·강한 대비 */
+  --title: #1f4e5f;            /* 제목 전용색 (2026-10-22 연구자 지시) */
+  --font-title: "Noto Serif KR", "Gudea", Georgia, serif;
   /* 지도·순차 척도 (옅음 -> 짙음). 리스크·노출 등 '많을수록 짙게' 에 쓴다 */
   --seq-0: #e9eeed;            /* 0 또는 자료 없음 */
   --seq-1: #d4ebe9;
@@ -252,8 +254,10 @@ ul.changes .badge, ul.changes li .m, .rank small, .hero .meta div, .site-footer,
 .submit-bar .hint, .decide label, .rhead .small, .toc li a, .hs2-row, .hs2-head, .comp-legend, .regtable, .api-table .small, code { font-size: 13pt !important; }
 .hero .meta b, .btn { font-size: 15pt !important; }
 h3, .panel-card h3, .codebook h3 { font-size: 18pt !important; }
-h2, .panel-card h2, article h2, .codebook details.sec.lv2 > summary { font-size: 22pt !important; }
-h1, .hero h1, article h1 { font-size: 30pt !important; }
+h2, .panel-card h2, article h2, .codebook details.sec.lv2 > summary { font-size: 24pt !important; }
+h1, .hero h1, article h1 { font-size: 34pt !important; }
+h1, h2, .hero h1, article h1, article h2, .panel-card h2, .codebook details.sec.lv2 > summary { font-family: var(--font-title); font-weight: 600; color: var(--title); letter-spacing: -0.01em; }
+.hero h1 { color: var(--navy); }
 .hero .meta b { font-size: 22pt !important; }
 .stat .value { font-size: 28pt !important; }
 .hero .wrap { padding-top: 44px; padding-bottom: 44px; }
@@ -308,6 +312,14 @@ input[type="checkbox"], input[type="radio"] { width: 22px; height: 22px; vertica
 .toc { display: flex; flex-wrap: wrap; gap: 10px 14px; margin: 0 0 8px; padding: 0; list-style: none; }
 .toc li a { display: inline-block; border: 1px solid var(--line); background: var(--surface); padding: 6px 14px; }
 .toc li a:hover { border-color: var(--ink); text-decoration: none; }
+/* 패널 2 사건 상세 행·기관 현황 */
+.ev-row .ev-title { color: var(--title); }
+.ev-more td { background: var(--surface-2); padding: 12px 18px 16px; }
+.ev-grid { display: grid; grid-template-columns: 90px 1fr; gap: 6px 14px; }
+.ev-grid > span:nth-child(odd) { color: var(--muted); }
+.ev-updates { margin: 0; padding-left: 1.1em; }
+a.org { border-bottom: 1px dotted var(--muted); }
+.org-box { padding: 12px 16px; margin-bottom: 12px; background: var(--surface-2); border: 1px solid var(--line); line-height: 1.6; }
 /* 자료 페이지 API 표 */
 .api-table td, .api-table th { padding-left: 20px; }
 .api-table td:nth-child(4) { word-break: break-all; }

@@ -379,7 +379,7 @@ APIS = [
 def render_data(reports: list[Report]) -> str:
     repo = REPO_URL
     files = [("ip_risk.json", "패널 1 — 국가·연도별 리스크·노출·거리"), ("ip_sectors.json", "패널 1 — 조치 단위 원자료(산점도·회귀)"),
-             ("ai_coop.json", "패널 2 — 사건 목록과 집계"), ("world.geojson", "지도 (Natural Earth 1:110m)")]
+             ("ai_coop.json", "패널 2 — 사건 목록·집계·기관 목록")]
     rows = "".join(f'<tr><td><a href="{f}" download>{f}</a></td><td>{html.escape(d)}</td></tr>' for f, d in files)
     api_rows = "".join(
         f'<tr><td>{html.escape(n)}<span class="small">{html.escape(ep)}</span><span class="small">{html.escape(where)}</span></td>'
@@ -435,12 +435,9 @@ def render_codebook() -> str:
     for text in (panels, gta):
         if text.strip():
             parts.append(collapse_h2(md_to_html_plain(text)))
-    toc = [("panel1", "패널 1 리스크 지수"), ("scatter", "패널 1 산점도·회귀"), ("composition", "패널 1 블록 구성"),
-           ("findings", "패널 1 확인된 사항"), ("panel2", "패널 2 코딩 규칙"), ("gta", "GTA 자료 코드북")]
-    toc_html = "".join(f'<li><a href="#{a}" onclick="document.getElementById(\'{a}\').open=true">{html.escape(t)}</a></li>' for a, t in toc)
     body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Codebook</span><h1>코드북</h1>'
             f'</div></header>'
-            f'<section class="section"><div class="wrap"><div class="codebook"><ul class="toc">{toc_html}</ul>{"".join(parts)}</div></div></section>')
+            f'<section class="section"><div class="wrap"><div class="codebook">{"".join(parts)}</div></div></section>')
     return page(f"코드북 · {SITE_TITLE}", body, current="codebook.html")
 
 
@@ -485,7 +482,6 @@ def build(logs: Path = LOGS, out: Path = SITE, quiet: bool = False) -> Path:
     (out / "r").mkdir(parents=True)
     (out / ".nojekyll").write_text("", encoding="utf-8")   # GitHub Pages 의 Jekyll 처리 끄기
     shutil.copy2(HERE / "assets" / "site.css", out / "site.css")
-    shutil.copy2(HERE / "reference" / "ne_110m_admin_0_countries.geojson", out / "world.geojson")
 
     (out / "index.html").write_text(render_index(reports), encoding="utf-8")
     (out / "data.html").write_text(render_data(reports), encoding="utf-8")
