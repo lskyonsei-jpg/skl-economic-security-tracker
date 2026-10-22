@@ -306,7 +306,7 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                 more = p.get("extra_sources") or []
                 if more:
                     extra += '<p class="small">같은 거래를 다룬 다른 기사 ' + str(len(more)) + '건: ' + " · ".join(
-                        f'<a href="{_esc(m.get("url"))}" target="_blank" rel="noopener">{_esc((m.get("title") or "")[:30])}</a> ({_esc(m.get("form"))}, {_esc(m.get("confidence"))})' for m in more) + '</p>'
+                        f'<a href="{_esc(m.get("url"))}" target="_blank" rel="noopener">{_esc((m.get("title") or "")[:30])}</a>' + (f' ({_esc(m.get("form"))}, {_esc(m.get("confidence"))})' if m.get("form") else '') for m in more) + '</p>'
                 if p.get("form_variants"):
                     extra += f'<p class="small">다른 기사의 form 판정: {_esc(", ".join(sorted(set(p["form_variants"]))))}</p>'
                 title, meta = _esc(ev.get("title")), ev_line(ev)

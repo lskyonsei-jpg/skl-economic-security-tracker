@@ -123,7 +123,8 @@ def discover(window_days: int = 2) -> list[dict]:
             if not link or link in seen or any(d in link for d in cc.PAYWALL_DOMAINS):
                 continue
             seen.add(link)
-            out.append({"url": link, "title": it["title"], "summary": it["summary"], "engine": engine})
+            out.append({"url": link, "title": it["title"], "summary": it["summary"], "engine": engine,
+                        "published": dt.datetime(*pub[:6]).date().isoformat() if pub else None})
     for q in QUERIES_KO:
         add(_rss("https://news.google.com/rss/search", {"q": f"{q} when:{window_days}d", "hl": "ko", "gl": "KR", "ceid": "KR:ko"}), "google")
         time.sleep(0.3)
@@ -159,16 +160,41 @@ def prefilter(cands: list[dict]) -> list[dict]:
     return keep
 
 
+def dedup_candidates(cands: list[dict], days: int = 3) -> list[dict]:
+    """검색 단계의 중복 제거 — 코딩 전에 같은 거래를 다룬 기사를 하나로 합친다(연구자 지시 2026-10-22: 검색 과정의 일부).
+
+    기준은 코딩 뒤의 _same_deal 과 같다: 제목·요약에서 찾은 양측 기관이 각각 Jaccard ≥ 0.5 로 겹치고 보도일이 ±days 안.
+    기관 목록에 없는 자리표시("(미국 측)" 등)만 있는 기사는 비교 근거가 없으므로 합치지 않는다.
+    대표 기사는 가장 먼저 보도된 것. 나머지는 대표의 others 에 남아 제안의 '다른 기사' 로 보인다.
+    """
+    groups: list[dict] = []
+    for c in sorted(cands, key=lambda x: x.get("published") or "9999-99-99"):
+        us = [x for x in c.get("hint_us", []) if not x.startswith("(")]
+        kr = [x for x in c.get("hint_kr", []) if not x.startswith("(")]
+        key = {"us_parties": us, "kr_parties": kr, "date": c.get("published")}
+        home = next((g for g in groups if us and kr and _same_deal(g["_key"], key, days)), None)
+        if home is not None:
+            home.setdefault("others", []).append({"url": c["url"], "title": c["title"]})
+            continue
+        c["_key"] = key
+        groups.append(c)
+    if len(groups) != len(cands):
+        print(f"[A] 검색 단계 중복 제거: {len(cands)}건 -> {len(groups)}건")
+    return groups
+
+
 # ------------------------------------------------------------------ Task A
 
 
 def task_a(client, system: str, state: dict, events: list[dict], budget: Budget, today: str) -> list[dict]:
     cands = prefilter(discover())
-    fresh = [c for c in cands if c["url"] not in state["seen"]]
-    print(f"[A] 후보 {len(cands)}건, 처음 보는 것 {len(fresh)}건")
+    fresh = dedup_candidates([c for c in cands if c["url"] not in state["seen"]])
+    print(f"[A] 후보 {len(cands)}건, 처음 보는 것(중복 제거 뒤) {len(fresh)}건")
     proposals = []
     for c in fresh[:MAX_A_ARTICLES]:
         state["seen"][c["url"]] = today
+        for o in c.get("others", []):
+            state["seen"][o["url"]] = today
         if not budget.ok():
             print("  호출 상한 — 나머지는 내일"); break
         inp = cc.resolve_input(c["title"], None, c["url"], c["summary"])
@@ -190,6 +216,7 @@ def task_a(client, system: str, state: dict, events: list[dict], budget: Budget,
                 "id": new_id(state, "A", today), "task": "A", "created": today, "status": "proposed",
                 "payload": ev, "possible_duplicate_of": dup["id"] if dup else None,
                 "unknown_orgs": unk_us + unk_kr,
+                "extra_sources": [{"url": o["url"], "title": o["title"], "form": None, "confidence": None} for o in c.get("others", [])],
                 "evidence": {"url": inp["url"] or c["url"], "via": inp["via"], "kind": inp["kind"], "chars": inp["chars"],
                              "sha256": inp["sha256"], "excerpt": inp["text"][:500]},
             })
@@ -208,7 +235,8 @@ def _same_deal(a: dict, b: dict, days: int = 3) -> bool:
 
 
 def dedup_proposals(new: list[dict], pending_old: list[dict]) -> list[dict]:
-    """오늘의 A 제안을 거래 단위로 묶는다. 가장 확신도 높은 것을 대표로 두고 나머지는 extra_sources 로.
+    """코딩 뒤의 중복 제거(안전망). 검색 단계(dedup_candidates)에서 못 거른 같은 거래 — 기사 표기가 달라 기관 목록으로는
+    못 잡았지만 모델이 같은 주체로 코딩한 경우 — 를 거래 단위로 하나로 합친다. 확신도 높은 것이 대표, 나머지는 extra_sources.
     이미 미결인 이전 제안과 같은 거래면 그쪽에 출처만 보탠다."""
     kept: list[dict] = []
     for p in sorted(new, key=lambda x: -(x["payload"].get("confidence") or 0)):
@@ -220,10 +248,11 @@ def dedup_proposals(new: list[dict], pending_old: list[dict]) -> list[dict]:
             continue
         home.setdefault("extra_sources", []).append({"url": p["evidence"]["url"], "title": p["payload"].get("title"),
                                                      "form": p["payload"].get("form"), "confidence": p["payload"].get("confidence")})
+        home["extra_sources"].extend(p.get("extra_sources", []))
         # 대표보다 강한 form 이 나오면 메모에 남긴다(바꾸지는 않는다)
         if p["payload"].get("form") != home["payload"].get("form"):
             home.setdefault("form_variants", []).append(p["payload"].get("form"))
-    print(f"[A] 중복 묶기: {len(new)}건 -> {len(kept)}건 (이전 미결에 합쳐진 것 {len(new) - len(kept) - sum(len(k.get('extra_sources', [])) for k in kept)}건)")
+    print(f"[A] 중복 제거: {len(new)}건 -> {len(kept)}건 (이전 미결에 합쳐진 것 {len(new) - len(kept) - sum(len(k.get('extra_sources', [])) for k in kept)}건)")
     return kept
 
 
@@ -580,7 +609,7 @@ def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
 
 def cmd_apply(today: str) -> int:
     state = load_state(); doc = load_events()
-    # 미결 A 제안 중 같은 거래는 하나로 묶는다(예전 실행이 남긴 중복 정리)
+    # 미결 A 제안 중 같은 거래는 하나로 합친다(예전 실행이 남긴 중복 정리)
     pending_a = [p for p in state["proposals"] if p["task"] == "A" and p["status"] == "proposed"]
     kept_ids = {k["id"] for k in dedup_proposals(pending_a, [])}
     merged = 0

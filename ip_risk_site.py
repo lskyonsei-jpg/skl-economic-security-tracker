@@ -90,8 +90,8 @@ def build(out: Path) -> bool:
     # 차별)는 둘 다 방향이 보호주의/차별 쪽이고, Green만 반대 방향(자유화)이라
     # "distortive"라는 이름과 섞으면 안 된다. 여기서 한 번만 자르면 지도·
     # 순위·추이·산점도·성장률·구성 화면 전체에 자동으로 반영된다.
-    # #DUP_RULE_20260824 6필드 중복 묶기 키에 gta_evaluation이 포함돼 있어
-    # 중복 그룹은 항상 단일 평가값으로만 구성된다 — 이 절단과 중복 묶기는
+    # #DUP_RULE_20260824 6필드 중복 제거 키에 gta_evaluation이 포함돼 있어
+    # 중복 그룹은 항상 단일 평가값으로만 구성된다 — 이 절단과 중복 제거는
     # 순서를 바꿔도 결과가 같다(교환 가능).
     total_measures = len(payload["measures"])
     payload["measures"] = [m for m in payload["measures"] if m.get("evaluation") in ("Red", "Amber")]
@@ -287,9 +287,9 @@ def build(out: Path) -> bool:
                                     "미국이 분포 최댓값이라 '미국 기준 거리'는 이 값의 부호만 뒤집은 아핀변환이었다 "
                                     "(실측 상관 -0.999996). 이중(dyadic) 구성은 정보를 더하지 않으므로 원 척도를 쓴다."),
               "scatter_note": ("산점도는 ip_sectors.json의 조치 단위 원자료에서 매번 다시 집계한다(서버 사전계산 아님). "
-                                "#DUP_RULE_20260824(6필드 전부 같은 반복 공고 1건으로 묶기)만 기본 반영한다 — "
+                                "#DUP_RULE_20260824(6필드 전부 같은 반복 공고 1건으로 중복 제거)만 기본 반영한다 — "
                                 "부처별 하드코딩 예외는 2026-08-25 전부 없앴다(표준 3조건: 산업정책·"
-                                "GTA Red/Amber·중복 묶기 외에는 특례를 두지 않는다). 화면에서 산업(HS2)을 추가로 걸 수 있다. "
+                                "GTA Red/Amber·중복 제거 외에는 특례를 두지 않는다). 화면에서 산업(HS2)을 추가로 걸 수 있다. "
                                 "map/rank/trend의 risk_index는 이 제외를 반영하지 않는다."),
               "trade_share_note": ("trade_share = 시행국 총 상품무역 대비 해당국 비중(IMF DOTS, 2026-08-05 갱신). "
                                     "시행국별 자기 기준. 산점도 원 크기 선택지 중 하나."),
@@ -335,7 +335,7 @@ def build(out: Path) -> bool:
                 counts = Counter(); excluded_count = 0; all_count = 0
                 by_name = fixed_blocs
                 for m in imp_measures:
-                    if m.get("dup") is True: continue  # #DUP_RULE_20260824 — 반복 공고 묶기
+                    if m.get("dup") is True: continue  # #DUP_RULE_20260824 — 반복 공고 중복 제거
                     if not _alive_on(m, cutoff): continue
                     for gta in m.get("affected", []):
                         all_count += 1
@@ -370,7 +370,7 @@ def build(out: Path) -> bool:
                     try: myear = int(m["date"][:4])
                     except (TypeError, ValueError): continue
                     if m["implementing"] != imp or myear != year: continue
-                    if m.get("dup") is True: continue  # #DUP_RULE_20260824 — 반복 공고 묶기
+                    if m.get("dup") is True: continue  # #DUP_RULE_20260824 — 반복 공고 중복 제거
                     for gta in m.get("affected", []):
                         all_count += 1
                         country = ALIASES.get(gta, gta)
