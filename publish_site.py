@@ -338,6 +338,13 @@ def render_index(reports: list[Report]) -> str:
             f'<p>Global Trade Alert 의 개입 조치를 매일 받아 BERT 로 산업정책 후보를 가르고, 지정학적 거리와 무역 구조에 얹어 읽는다. '
             f'두 번째 패널은 한미 AI 협력 사건을 같은 틀로 쌓는다. 모델 라벨은 후보군이며 확정 분류가 아니다.</p>'
             f'<div class="meta">{meta_html}</div></div></header>')
+    pending = ai_coop_site.pending_proposals()
+    banner = ""
+    if pending:
+        by = {k: sum(1 for p in pending if p["task"] == k) for k in "ABC"}
+        banner = (f'<section class="section" style="padding:20px 0"><div class="wrap"><a class="panel-card muted" href="review.html" style="min-height:0;padding:18px 24px">'
+                  f'<span class="eyebrow" style="margin-bottom:6px">판단 대기</span><h2 style="font-size:20px;margin:0">연구자 판단을 기다리는 제안 {len(pending)}건 — 새 사건 {by["A"]} · 갱신 {by["B"]} · 재검토 {by["C"]}</h2>'
+                  f'<span class="go">열기 →</span></a></div></section>')
     cards = ('<section class="section"><div class="wrap"><span class="eyebrow">Panels</span><div class="grid grid-2">'
              '<a class="panel-card" href="ip_risk.html"><span class="eyebrow">Panel 1</span><h2>Distortive Industrial Policy Tracker</h2>'
              '<p>GTA Red·Amber 산업정책 조치의 피영향국 노출을 연도별 BSV 지정학적 거리와 교차한 지도·순위·추이·산점도·블록 구성.</p>'
@@ -353,7 +360,7 @@ def render_index(reports: list[Report]) -> str:
     changes = ('<section class="section"><div class="wrap"><span class="eyebrow">Recent changes</span>'
                '<div class="panel"><div class="panel-head"><span>GTA 변경 리포트 (최신순)</span><a href="data.html">자료 내려받기 →</a></div>'
                f'<div class="panel-body"><ul class="changes">{"".join(items) or "<li>아직 리포트가 없습니다.</li>"}</ul></div></div></div></section>')
-    return page(SITE_TITLE, hero + cards + changes, current="index.html")
+    return page(SITE_TITLE, hero + banner + cards + changes, current="index.html")
 
 
 def render_data(reports: list[Report]) -> str:

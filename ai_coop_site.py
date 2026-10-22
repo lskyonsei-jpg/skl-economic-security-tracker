@@ -93,7 +93,7 @@ def aggregate(events: list[dict]) -> dict:
 
 
 def nav(current: str) -> str:
-    links = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"), ("data.html", "Data")]
+    links = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"), ("review.html", "Review"), ("data.html", "Data")]
     cur = ' aria-current="page"'
     items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in links)
     return (f'<nav class="site-nav"><div class="wrap"><a class="brand" href="index.html">'
@@ -205,12 +205,92 @@ def _page(title: str, hero_meta: str, body: str, asof: str, built: str) -> str:
 </body></html>'''
 
 
+# ------------------------------------------------------------------ 판단 대기(review.html)
+
+STATE_FILE = HERE / "data" / "ai_coop_state.json"
+
+
+def pending_proposals() -> list[dict]:
+    if not STATE_FILE.is_file():
+        return []
+    st = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    return [p for p in st.get("proposals", []) if p.get("status") == "proposed"]
+
+
+def _esc(v) -> str:
+    return html.escape("" if v is None else str(v))
+
+
+def render_review(props: list[dict], events_by_id: dict) -> str:
+    built = datetime.now().strftime("%Y-%m-%d %H:%M")
+    by_task = {k: [p for p in props if p["task"] == k] for k in ("A", "B", "C")}
+    meta = (f'<div class="meta"><div>대기<b>{len(props)}건</b></div><div>A 새 사건<b>{len(by_task["A"])}</b></div>'
+            f'<div>B 갱신<b>{len(by_task["B"])}</b></div><div>C 재검토<b>{len(by_task["C"])}</b></div></div>')
+    def ev_line(ev: dict) -> str:
+        return (f'{_esc(ev.get("date"))} · {_esc(ev.get("form"))} · {_esc(ev.get("track"))} · {_esc(", ".join(ev.get("sectors", [])))} · '
+                f'금액 {_esc(ev.get("amount_usd_bn"))} · conf {_esc(ev.get("confidence"))}')
+    def card(p: dict, body: str) -> str:
+        e = p.get("evidence", {})
+        link = f'<a href="{_esc(e.get("url"))}" target="_blank" rel="noopener">원문</a>' if e.get("url") else ""
+        return (f'<div class="panel" style="margin-bottom:14px"><div class="panel-head"><span><b>{_esc(p["id"])}</b> · {_esc(p["created"])}</span>'
+                f'<span>{link}</span></div>'
+                f'<div class="panel-body">{body}'
+                f'<p class="note" style="margin-top:10px">근거({_esc(e.get("via", ""))}, {_esc(e.get("chars", ""))}자, sha256 {_esc(str(e.get("sha256", ""))[:12])}): {_esc(str(e.get("excerpt", ""))[:300])}…</p>'
+                f'<p class="small">결정: <code>{_esc(p["id"])},approve,,</code> 또는 <code>{_esc(p["id"])},reject,,</code></p></div></div>')
+    sections = []
+    titles = {"A": "새 사건 후보", "B": "기존 사건 갱신 후보", "C": "기존 판단 재검토"}
+    for k in ("A", "B", "C"):
+        items = by_task[k]
+        cards = []
+        for p in items:
+            if k == "A":
+                ev = p["payload"]
+                extra = (f'<p class="small">기존 사건과 중복 가능: {_esc(p.get("possible_duplicate_of"))}</p>' if p.get("possible_duplicate_of") else "") + \
+                        (f'<p class="small">마스터에 없는 기관: {_esc(", ".join(p.get("unknown_orgs", [])))}</p>' if p.get("unknown_orgs") else "")
+                body = (f'<h3 style="margin:0 0 6px">{_esc(ev.get("title"))}</h3><p>{ev_line(ev)}</p>'
+                        f'<p>미국 측 {_esc(", ".join(ev.get("us_parties", [])))} / 한국 측 {_esc(", ".join(ev.get("kr_parties", [])))}</p>'
+                        f'<p>{_esc(ev.get("summary"))}</p><p class="note">모델 메모: {_esc(ev.get("note"))}</p>{extra}')
+            elif k == "B":
+                pl = p["payload"]; tgt = events_by_id.get(p.get("target_id"), {})
+                parts = [f'<h3 style="margin:0 0 6px">대상: {_esc(p.get("target_title"))}</h3><p>기존: {ev_line(tgt) if tgt else "-"}</p><p>관계: <b>{_esc(p.get("relation"))}</b> · conf {_esc(p.get("confidence"))}</p>']
+                if pl.get("new_event"):
+                    parts.append(f'<p>후속 사건: {_esc(pl["new_event"].get("title"))} — {ev_line(pl["new_event"])}</p>')
+                for u in pl.get("updates", []):
+                    parts.append(f'<p>수정 제안: <b>{_esc(u.get("field"))}</b> {_esc(u.get("old"))} → {_esc(u.get("new"))}<br><span class="small">{_esc(u.get("evidence"))}</span></p>')
+                if pl.get("lifecycle"):
+                    parts.append(f'<p>진행 상태 → <b>{_esc(pl["lifecycle"])}</b></p>')
+                parts.append(f'<p class="note">모델 메모: {_esc(p.get("note"))}</p>')
+                body = "".join(parts)
+            else:
+                pl = p["payload"]
+                rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_esc(d.get("old"))}</td><td>{_esc(d.get("new"))}</td></tr>' for d in pl.get("diffs", []))
+                body = (f'<h3 style="margin:0 0 6px">대상: {_esc(p.get("target_title"))}</h3>'
+                        f'<table><thead><tr><th>필드</th><th>기존(연구자)</th><th>모델</th></tr></thead><tbody>{rows}</tbody></table>'
+                        f'<p class="note" style="margin-top:8px">모델 근거: {_esc(p.get("note"))}</p>')
+            cards.append(card(p, body))
+        sections.append(f'<section class="section"><div class="wrap"><span class="eyebrow">{k}. {titles[k]} ({len(items)}건)</span>'
+                        + ("".join(cards) if cards else '<div class="empty">없음</div>') + '</div></section>')
+    howto = ('<section class="section"><div class="wrap"><details open><summary>결정 방법</summary><p class="note">'
+             '저장소의 <code>data/ai_coop_decisions.csv</code> 에 한 줄씩 추가한다(GitHub 웹 편집). 열은 <code>proposal_id,decision,note,date</code>, decision 은 approve 또는 reject. '
+             '다음 자동 실행(매일 06:00 KST)이 반영하고 이 페이지에서 사라진다. 승인된 A 는 사건으로 추가(상태 "확정", 코딩 주체 모델·승인자 연구자), B 는 후속 사건 추가 또는 값 갱신, C 는 값 갱신. '
+             '모든 반영은 사건의 updates 이력에 근거 URL 과 함께 남는다. AI 는 어떤 것도 스스로 반영하지 않는다.</p></details></div></section>')
+    body = "".join(sections) + howto
+    head = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<title>판단 대기 · SKL</title><link rel="stylesheet" href="site.css"></head>\n'
+    hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Review queue</span><h1>판단 대기</h1>'
+            '<p>자동 탐지·코딩이 낸 제안입니다. A 는 새 사건 후보, B 는 기존 사건의 후속·수정·진행 상태, C 는 기존 판단과 모델 판정이 다른 경우입니다. 연구자가 승인해야 반영됩니다.</p>'
+            + meta + '</div></header>\n')
+    return head + "<body>" + nav("review.html") + "\n" + hero + body + "\n" + footer("", built) + "\n</body></html>"
+
+
 def build(out: Path) -> bool:
     events, meta = load_events()
     agg = aggregate(events)
     (out / "ai_coop.json").write_text(json.dumps({"as_of": meta["as_of"], "n": agg["n"], "events": events, "agg": agg},
                                                  ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (out / "ai_coop.html").write_text(render(agg, {"fetched_at": meta["as_of"]}), encoding="utf-8")
+    props = pending_proposals()
+    (out / "review.html").write_text(render_review(props, {e["id"]: e for e in events}), encoding="utf-8")
+    (out / "review.json").write_text(json.dumps({"pending": len(props), "by_task": {k: sum(1 for p in props if p["task"] == k) for k in "ABC"}}, ensure_ascii=False), encoding="utf-8")
     print(f"[ai_coop_site] 사건 {agg['n']}건 (확정 {agg['status'].get('confirmed', 0)}, 자동 {agg['status'].get('auto', 0)})")
     return agg["n"] > 0
 

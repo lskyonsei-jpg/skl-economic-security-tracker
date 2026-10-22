@@ -1,7 +1,7 @@
 # 전체 파이프라인 — 사람이 아무것도 실행하지 않는다.
 #
 #   Release "state" 내려받기 -> GTA 갱신(auto_update.py) -> (월 1회) Comtrade·기준자료 수집
-#   -> (수동) 한미 AI 협력 표본 재코딩 -> Release "state" 올리기 -> 사이트 빌드 -> GitHub Pages 배포
+#   -> 한미 AI 협력: 결정 CSV 반영 + 일일 판단 요청(A 새 사건·B 갱신·C 재검토 → 사이트 review.html) -> Release "state" 올리기 -> 빌드 -> 배포
 #
 # 일정(UTC 21:00 = 한국 06:00)
 #   매일: incremental.  일요일: full(전량 재대조).  매월 4일: Comtrade 와 기준자료(BSV·IMF DOTS·WDI)도 수집.
@@ -35,7 +35,7 @@ on:
       ai_coop:
         description: "한미 AI 협력: 표본 재코딩 검증 (Claude API 비용 발생)"
         type: choice
-        options: [none, recode-medium, recode-high]
+        options: [none, daily, recode-medium, recode-high]
         default: none
 
 permissions:
@@ -114,7 +114,7 @@ jobs:
           for a in comtrade gta_threads reference; do
             if [ -f "_state/$a.tar.gz" ]; then mkdir -p "data/$a" && tar -xzf "_state/$a.tar.gz" -C "data/$a"; fi
           done
-          [ -f _state/ai_coop_events.json ] && cp _state/ai_coop_events.json data/ai_coop_events.json
+          for f in ai_coop_events.json ai_coop_state.json; do [ -f "_state/$f" ] && cp "_state/$f" "data/$f"; done
           ls -la cache data; echo "리포트 $(ls logs | wc -l)개"
 
       - name: GTA 갱신
@@ -145,6 +145,17 @@ jobs:
         if: steps.plan.outputs.reference == 'true'
         run: python collect_reference.py && echo "changed=true" >> "$GITHUB_OUTPUT"
 
+      - name: 한미 AI 협력 — 결정 반영 + 일일 판단 요청(사이트 review.html)
+        id: ai_daily
+        if: github.event_name == 'schedule' || github.event.inputs.ai_coop == 'daily'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "ANTHROPIC_API_KEY 없음 — 건너뜀"; exit 0; fi
+          python ai_coop_tasks.py apply
+          python ai_coop_tasks.py daily
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
       - name: 한미 AI 협력 — 표본 재코딩 검증
         id: ai_coop
         if: github.event.inputs.ai_coop == 'recode-high' || github.event.inputs.ai_coop == 'recode-medium'
@@ -163,7 +174,7 @@ jobs:
           retention-days: 30
 
       - name: Release "state" 올리기
-        if: steps.gta.outputs.changed == 'true' || steps.comtrade.outputs.changed == 'true' || steps.reference.outputs.changed == 'true'
+        if: steps.gta.outputs.changed == 'true' || steps.comtrade.outputs.changed == 'true' || steps.reference.outputs.changed == 'true' || steps.ai_daily.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -177,6 +188,9 @@ jobs:
           fi
           if [ "${{ steps.reference.outputs.changed }}" = "true" ]; then
             tar -czf reference.tar.gz -C data/reference . && UP="$UP reference.tar.gz"
+          fi
+          if [ "${{ steps.ai_daily.outputs.changed }}" = "true" ]; then
+            UP="$UP data/ai_coop_events.json data/ai_coop_state.json"
           fi
           gh release upload state $UP -R "$GITHUB_REPOSITORY" --clobber
           echo "올림: $UP"
