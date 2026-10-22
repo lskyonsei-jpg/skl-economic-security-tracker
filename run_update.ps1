@@ -237,7 +237,8 @@ if ($ExitCode -ne 0) { exit $ExitCode }
 # --- 사이트 갱신 -------------------------------------------------------------
 # 여기서 실패해도 업데이트 자체는 이미 끝났다. 엑셀은 멀쩡하므로 경고만 하고
 # output 폴더는 연다. 사이트만 옛 내용으로 남는다.
-if (Test-Path -LiteralPath (Join-Path $Here 'site_config.json')) {
+# 2026-10-22: 배포는 GitHub Actions(GitHub Pages)로 이전. 여기서는 로컬 확인용 site/ 만 만든다.
+if ($true) {
     Write-Host ''
     Write-Host '  변경 내역 사이트를 갱신합니다.' -ForegroundColor White
     Write-Rule
@@ -249,13 +250,7 @@ if (Test-Path -LiteralPath (Join-Path $Here 'site_config.json')) {
         if ($LASTEXITCODE -ne 0) {
             Write-Host '    사이트 생성에 실패했습니다. 엑셀은 정상입니다.' -ForegroundColor Yellow
         } else {
-            & (Join-Path $Here 'deploy_site.ps1')
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host '    사이트 업로드에 실패했습니다. 엑셀은 정상입니다.' -ForegroundColor Yellow
-            } else {
-                $SiteUrl = (Get-Content -LiteralPath (Join-Path $Here 'site_config.json') -Raw -Encoding UTF8 | ConvertFrom-Json).url
-                Write-Host ("    $SiteUrl") -ForegroundColor Cyan
-            }
+            Write-Host '    site/ 생성 완료. 배포는 GitHub Actions 가 push 때 한다.' -ForegroundColor Cyan
         }
     } catch {
         Write-Host ("    사이트 갱신 중 오류: " + $_.Exception.Message) -ForegroundColor Yellow

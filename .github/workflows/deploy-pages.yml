@@ -1,0 +1,83 @@
+# site/ 를 만들어 GitHub Pages 로 올린다.
+#
+# 입력: 저장소 코드 + Release "state" 의 자산(master.parquet, logs.tar.gz).
+#   state 릴리스는 파이프라인 상태 보관소다. 무거운 파일을 git 에 넣지 않기 위해
+#   Release 자산으로 두고, 갱신 워크플로가 매 실행 뒤 덮어쓴다.
+# 트리거: main 에 push(코드 변경 시 재배포), 수동 실행, 다른 워크플로의 호출.
+# 전제: 저장소 Settings > Pages > Source 가 "GitHub Actions" 로 설정돼 있어야 한다.
+name: GitHub Pages 배포
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "문서/**"
+      - "README.md"
+      - "CLAUDE.md"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-site.txt
+
+      - name: 사이트 빌드 의존성 설치 (torch 제외)
+        run: pip install -r requirements-site.txt
+
+      - name: 파이프라인 상태 내려받기 (Release "state")
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p cache logs _state
+          gh release download state -R "$GITHUB_REPOSITORY" -D _state \
+            -p master.parquet -p logs.tar.gz
+          mv _state/master.parquet cache/master.parquet
+          tar -xzf _state/logs.tar.gz -C logs
+          echo "master.parquet $(du -h cache/master.parquet | cut -f1), 리포트 $(ls logs/change_report_*.md | wc -l)건"
+
+      - name: 사이트 빌드
+        env:
+          PYTHONUTF8: "1"
+        run: python publish_site.py
+
+      - name: 산출물 요약
+        run: |
+          {
+            echo "## 사이트 빌드"
+            echo
+            echo "- 파일 $(find site -type f | wc -l)개, $(du -sh site | cut -f1)"
+            echo "- 패널 html: $(ls site/*.html | xargs -n1 basename | tr '\n' ' ')"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

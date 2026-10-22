@@ -38,7 +38,7 @@
 | `comtrade_reporters.json`, `comtrade_partners.json` | `build_oil_data.py`, `build_solar_data.py` — Comtrade 숫자코드 → ISO3 | UN Comtrade 참조 API(reporterAreas / partnerAreas). 파일 날짜 2026-08-29 |
 | `ne_110m_admin_0_countries.geojson` | `semiconductor_site.py`, `bloc_site.py` — 지도 | Natural Earth 1:110m Admin 0(공개 도메인) |
 | `hs2017_to_hs2022.json` | `semiconductor_site.py` — HS 판 대조 | WCO HS 2017→2022 상관표를 정리한 것 |
-| `oecd_semiconductor_hs.json` | `semiconductor_site.py` — 반도체 HS 코드 집합 | OECD (2019) *Measuring distortions in international markets: the semiconductor value chain*. 원문 PDF가 `OECD_2019_Measuring_distortions_semiconductor_value_chain.pdf` |
+| `oecd_semiconductor_hs.json` | `semiconductor_site.py` — 반도체 HS 코드 집합 | OECD (2019) *Measuring distortions in international markets: the semiconductor value chain*. 원문 PDF(`OECD_2019_Measuring_distortions_semiconductor_value_chain.pdf`)는 저작권 때문에 저장소에 넣지 않는다(.gitignore). 필요하면 OECD iLibrary에서 받는다 |
 | `geopolitical_bloc_0_1.json` | `industrial_policy_site.py` — 진영 분류 | 자체 코딩 |
 | `HSCodeandDescription.xlsx` | `industrial_policy_site.py` — HS4 명칭 | UN Comtrade HS 코드 목록 |
 

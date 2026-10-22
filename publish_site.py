@@ -1,7 +1,8 @@
 """SKL Economic Security Tracker — 변경 내역을 정적 웹사이트로 만든다.
 
 logs/change_report_*.md 를 읽어 site/ 아래에 HTML을 쓴다. 비밀값은 다루지
-않는다. Cloudflare 업로드는 deploy_site.ps1 이 따로 한다.
+않는다. 배포는 GitHub Actions(.github/workflows/deploy-pages.yml)가 site/ 를
+GitHub Pages 로 올린다(2026-10-22, Cloudflare Pages 에서 이전).
 
   site/
     index.html              전체 목록 (최신순)
@@ -34,11 +35,6 @@ import solar_site
 HERE = Path(__file__).resolve().parent
 LOGS = HERE / "logs"
 SITE = HERE / "site"
-
-# Pages Functions 는 "올리는 폴더 안"이 아니라 wrangler 가 실행되는 위치의
-# functions/ 를 본다. site/functions/ 에 두면 조용히 무시되고 사이트가 인증
-# 없이 열린다(2026-08-13에 실제로 그렇게 새어나갔다). site 바깥에 둔다.
-FUNCTIONS = HERE / "functions"
 
 SITE_TITLE = "SKL Economic Security Tracker"
 REPORT_GLOB = "change_report_*.md"
@@ -311,144 +307,6 @@ footer.site { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--l
 """
 
 
-# Cloudflare Pages Functions. functions/_middleware.js 로 나가며 모든 요청
-# 앞에 선다. 비밀번호는 코드에 없다 — Cloudflare 에 저장된 값을 읽는다.
-#
-#   SITE_PASSWORD  아이디 skl 의 비밀번호. 원문 그대로 저장된다(옛 방식).
-#                  사이트_설정.cmd 의 [2] 로 넣는다.
-#   SITE_USERS     사람마다 따로 발급한 계정. 한 줄에 한 명씩
-#                  `아이디:소금:해시` 로 들어간다. 비밀번호 원문은 어디에도
-#                  저장되지 않는다. 사이트_설정.cmd 의 [3] 으로 넣는다.
-#
-# 배포마다 생기는 <해시>.<프로젝트>.pages.dev 주소에도 똑같이 적용된다.
-# 그 주소들은 지워지지 않고 영원히 남기 때문에 이게 중요하다.
-MIDDLEWARE = r"""
-// SKL Economic Security Tracker - 비밀번호를 통과하지 못하면 아무것도 내보내지 않는다.
-const OWNER = "skl";
-
-function unauthorized(message) {
-  return new Response(message, {
-    status: 401,
-    headers: {
-      "WWW-Authenticate": 'Basic realm="SKL Economic Security Tracker", charset="UTF-8"',
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
-  });
-}
-
-// 글자를 하나씩 비교하다 틀린 곳에서 멈추면 응답 시간으로 비밀번호를 캐낼 수
-// 있다. 길이가 같으면 끝까지 다 보고 판정한다.
-function safeEqual(a, b) {
-  const enc = new TextEncoder();
-  const left = enc.encode(a);
-  const right = enc.encode(b);
-  if (left.length !== right.length) return false;
-  let diff = 0;
-  for (let i = 0; i < left.length; i++) diff |= left[i] ^ right[i];
-  return diff === 0;
-}
-
-// SHA-256 을 16진수 글자로. 소금을 앞에 붙여 같은 비밀번호라도 사람마다
-// 다른 해시가 나오게 한다.
-async function hashPassword(salt, password) {
-  const bytes = new TextEncoder().encode(salt + ":" + password);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-// SITE_USERS 한 줄 = `아이디:소금:해시`. 빈 줄과 # 로 시작하는 줄은 건너뛴다.
-function parseUsers(raw) {
-  const out = new Map();
-  for (const line of (raw || "").split(/[\r\n]+/)) {
-    const row = line.trim();
-    if (!row || row.startsWith("#")) continue;
-    const parts = row.split(":");
-    if (parts.length !== 3) continue;
-    const [name, salt, hash] = parts.map((p) => p.trim());
-    if (name && salt && hash) out.set(name, { salt, hash });
-  }
-  return out;
-}
-
-export async function onRequest(context) {
-  const { request, env, next } = context;
-  // trim: 저장 경로가 값 끝에 줄바꿈을 붙이는 사고가 있었다. 비밀번호에는
-  // 공백을 못 쓰게 막아뒀으므로 잘라내도 잃는 것이 없다.
-  const ownerPassword = (env.SITE_PASSWORD || "").trim();
-  const users = parseUsers(env.SITE_USERS);
-
-  // 아무 계정도 없으면 열어두지 않고 막는다.
-  if (!ownerPassword && users.size === 0) {
-    return new Response(
-      "비밀번호가 아직 설정되지 않았습니다. 사이트_설정.cmd 를 실행해 [2] 를 골라 주세요.",
-      { status: 503,
-        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } }
-    );
-  }
-
-  const header = request.headers.get("Authorization") || "";
-  if (!header.startsWith("Basic ")) return unauthorized("로그인이 필요합니다.");
-
-  let decoded;
-  try {
-    decoded = atob(header.slice(6));
-  } catch (error) {
-    return unauthorized("로그인이 필요합니다.");
-  }
-
-  const split = decoded.indexOf(":");
-  const user = split < 0 ? "" : decoded.slice(0, split);
-  const pass = split < 0 ? "" : decoded.slice(split + 1);
-
-  // 없는 아이디라도 해시를 한 번 돌린다. 안 돌리면 응답이 빨라져서
-  // "이 아이디는 있다/없다"가 밖에서 보인다.
-  const found = users.get(user);
-  const salt = found ? found.salt : "dummy";
-  const hash = await hashPassword(salt, pass);
-
-  let ok = false;
-  if (found) {
-    ok = safeEqual(hash, found.hash);
-  } else if (ownerPassword) {
-    // 옛 방식. 아이디 skl 하나에 원문 비밀번호를 맞춰 본다.
-    ok = safeEqual(user, OWNER) && safeEqual(pass, ownerPassword);
-  }
-  if (!ok) return unauthorized("아이디 또는 비밀번호가 맞지 않습니다.");
-
-  const response = await next();
-  const out = new Response(response.body, response);
-  out.headers.set("Cache-Control", "no-store");
-  out.headers.set("X-Robots-Tag", "noindex, nofollow");
-  return out;
-}
-""".lstrip()
-
-
-def page(title: str, body: str, depth: int = 0) -> str:
-    up = "../" * depth
-    return f"""<!doctype html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>{html.escape(title)}</title>
-<link rel="stylesheet" href="{up}style.css">
-</head>
-<body>
-<div class="wrap">
-{body}
-<footer class="site">
-  {html.escape(SITE_TITLE)} · GTA 자료 기반 · 대외 공개용이 아님
-</footer>
-</div>
-</body>
-</html>
-"""
-
 
 ROW_RE = re.compile(r"<tr>(.*?)</tr>", re.S)
 CELL_RE = re.compile(r"<td[^>]*>.*?</td>", re.S)
@@ -674,8 +532,8 @@ def build(logs: Path = LOGS, out: Path = SITE, quiet: bool = False) -> Path:
         out.rename(prev)
     (out / "r").mkdir(parents=True)
 
-    FUNCTIONS.mkdir(exist_ok=True)
-    (FUNCTIONS / "_middleware.js").write_text(MIDDLEWARE, encoding="utf-8")
+    # GitHub Pages 의 Jekyll 처리를 끈다. 없으면 _ 로 시작하는 경로가 조용히 빠진다.
+    (out / ".nojekyll").write_text("", encoding="utf-8")
 
     (out / "style.css").write_text(CSS.strip() + "\n", encoding="utf-8")
     copy_fonts(out)

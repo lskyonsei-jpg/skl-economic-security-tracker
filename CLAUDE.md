@@ -1,16 +1,16 @@
 # CLAUDE.md — SKL Economic Security Tracker
 
-이 폴더는 GTA 수집 → BERT 분류 → 변경 리포트 → 정적 사이트 빌드 → Cloudflare Pages 배포까지 자체 완결된 파이프라인이다.
+이 폴더는 GTA 수집 → BERT 분류 → 변경 리포트 → 정적 사이트 빌드 → GitHub Pages 배포(GitHub Actions)까지 자체 완결된 파이프라인이다.
 
 ## 지금 진행 중인 작업
 
 - **GitHub Actions 이전.** 목표와 단계는 `문서/20261022_HANDOFF_ClaudeCode.md`를 먼저 읽는다.
 - 설계 배경과 선택지는 `문서/20261022_운영방안_GitHub이전과_패널로드맵.md`.
-- 원격 저장소: `https://github.com/lskyonsei-jpg/skl-economic-security-tracker` (private, 비어 있음)
+- 원격 저장소: `https://github.com/lskyonsei-jpg/skl-economic-security-tracker`. 2026-10-22 연구자 결정: 사이트 공개 전환, GitHub Pages 호스팅, Cloudflare 완전 제거, 보관소는 GitHub Release 자산(R2 안 씀).
 
 ## 절대 하지 않는 것
 
-- `.gta_api_key.xml`, `.cf_api_token.xml`, `.site_users.json`의 내용을 읽거나 출력하거나 커밋하지 않는다. 비밀값은 사람이 GitHub Secrets에 직접 넣는다.
+- `.gta_api_key.xml`(및 남아 있는 옛 Cloudflare 파일 `.cf_api_token.xml`, `.site_users.json`)의 내용을 읽거나 출력하거나 커밋하지 않는다. 비밀값은 사람이 GitHub Secrets에 직접 넣는다.
 - `cache/`, `output/`, `site/`, `logs/`, `.venv/`, `node_modules/`를 커밋하지 않는다.
 - 상위 볼트 저장소(`../../`, `02_System building`)에 원격을 추가하거나 push하지 않는다. 회의록·과제 자료가 들어 있다.
 - 이 폴더 밖의 파일을 수정·이동하지 않는다. 밖에서 가져올 파일은 `reference/`에 사본으로 둔다.
@@ -36,5 +36,5 @@
 
 ## 실행 환경
 
-- Windows, Python은 `.venv/Scripts/python.exe`, Node는 폴더 내 `node_modules/.bin/wrangler.cmd`.
+- Windows, Python은 `.venv/Scripts/python.exe`. Node·wrangler는 2026-10-22 Cloudflare 제거와 함께 쓰지 않는다.
 - 세부 동작은 `README.md`(2026-08-28 기준, 패널 5개 추가분은 미반영)와 `문서/코드북.md`.

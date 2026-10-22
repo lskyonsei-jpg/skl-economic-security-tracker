@@ -13,3 +13,5 @@ node_modules/
 site_prev/
 *.log
 *.lnk
+# 공개 저장소에 두지 않는 것(저작권 자료, 로컬 사본만)
+reference/OECD_2019_Measuring_distortions_semiconductor_value_chain.pdf
