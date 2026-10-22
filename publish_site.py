@@ -210,6 +210,7 @@ def page(title: str, body: str, depth: int = 0, current: str = "") -> str:
     if depth:
         nav = nav.replace('href="', f'href="{up}')
         foot = foot.replace('href="', f'href="{up}')
+    body = ai_coop_site.with_last_update(body, STATE.get("data_end_date", ""))
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -327,52 +328,50 @@ def render_report(report: Report) -> str:
                 head + body + "\n</article></main>", depth=1, current="index.html")
 
 
+# 랜딩 "Recent changes" 이정표. 연구자가 정한 세 줄만 쓴다(2026-10-22). 변경 리포트 목록은 넣지 않는다.
+MILESTONES = [
+    ("2026-08-18", "최초 구축"),
+    ("2026-10-22", "사이트 이전 (GitHub Pages)"),
+    ("2026-10-22", "[패널 추가] 한미 AI 협력 트래커"),
+]
+
+
 def render_index(reports: list[Report]) -> str:
-    newest = reports[0] if reports else None
-    asof = STATE.get("data_end_date") or (newest.data_date if newest else "—")
-    rows = STATE.get("rows")
-    meta = [("자료 기준일", asof), ("전체 표본", f"{rows:,}건" if rows else (newest.rows if newest else "—")),
-            ("변경 리포트", f"{len(reports)}건"), ("마지막 전량 점검", STATE.get("last_full_rebuild") or "—")]
-    meta_html = "".join(f"<div>{html.escape(k)}<b>{html.escape(str(v))}</b></div>" for k, v in meta)
     hero = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Research Dashboard</span>'
-            f'<h1>{html.escape(SITE_TITLE)}</h1>'
-            f'<div class="meta">{meta_html}</div></div></header>')
+            f'<h1>{html.escape(SITE_TITLE)}</h1></div></header>')
     pending = ai_coop_site.pending_proposals()
     banner = ""
     if pending:
         by = {k: sum(1 for p in pending if p["task"] == k) for k in "ABC"}
         banner = (f'<section class="section" style="padding:20px 0"><div class="wrap"><a class="panel-card muted" href="review.html" style="min-height:0;padding:18px 24px">'
-                  f'<span class="eyebrow" style="margin-bottom:6px">판단 대기</span><h2 style="margin:0">제안 {len(pending)}건 — 새 사건 {by["A"]} · 갱신 {by["B"]} · 재검토 {by["C"]}</h2>'
+                  f'<span class="eyebrow" style="margin-bottom:6px">판단 대기</span><h2 style="margin:0"><span class="alert-dot" aria-hidden="true">⚠</span>제안 {len(pending)}건 — 새 사건 {by["A"]} · 갱신 {by["B"]} · 재검토 {by["C"]}</h2>'
                   f'<span class="go">열기 →</span></a></div></section>')
     cards = ('<section class="section"><div class="wrap"><span class="eyebrow">Panels</span><div class="grid grid-2">'
              '<a class="panel-card" href="ip_risk.html"><span class="eyebrow">Panel 1</span><h2>Distortive Industrial Policy Tracker</h2>'
              '<span class="go">열기 →</span></a>'
              '<a class="panel-card" href="ai_coop.html"><span class="eyebrow">Panel 2</span><h2>한미 AI 협력 트래커</h2>'
              '<span class="go">열기 →</span></a></div></div></section>')
-    items = []
-    for report in reports[:10]:
-        badges = "".join(f'<span class="badge">{html.escape(l)} <b>{html.escape(v)}</b></span>' for l, v in report.counts())
-        items.append(f'<li><span class="d"><a href="r/{report.slug}.html">{html.escape(report.data_date)}</a></span>'
-                     f'<span>{badges}</span><span class="m">{html.escape(report.mode)} · {report.when.strftime("%m-%d %H:%M")}</span></li>')
+    items = "".join(f'<li><span class="d">{html.escape(d)}</span><span>{html.escape(t)}</span></li>' for d, t in MILESTONES)
     changes = ('<section class="section"><div class="wrap"><span class="eyebrow">Recent changes</span>'
-               '<div class="panel"><div class="panel-head"><span>GTA 변경 리포트 (최신순)</span><a href="data.html">자료 내려받기 →</a></div>'
-               f'<div class="panel-body"><ul class="changes">{"".join(items) or "<li>아직 리포트가 없습니다.</li>"}</ul></div></div></div></section>')
+               f'<div class="panel"><div class="panel-body"><ul class="changes">{items}</ul></div></div></div></section>')
     return page(SITE_TITLE, hero + banner + cards + changes, current="index.html")
 
 
 # 파이프라인이 실제로 호출하는 외부 API. 코드의 상수와 같이 바뀌어야 한다.
 #   (이름, 끝점, 용도, 주기, 키, 코드 위치)
+#   (패널, 이름, 끝점, 무엇을 하나, 주기, 키, 코드 위치)
 APIS = [
-    ("Global Trade Alert API v2", "api.globaltradealert.org/api/v2/gta/data/", "개입 조치 전량 수집 (패널 1)", "매일", "GTA_API_KEY", "auto_update.py"),
-    ("Hugging Face Hub", "industrialpolicygroup/industrialpolicy-classifier", "BERT 산업정책 분류 모델 (revision 고정)", "매일 (새 건만 분류)", "없음", "auto_update.py"),
-    ("Harvard Dataverse", "dataverse.harvard.edu · doi:10.7910/DVN/LEJUQZ", "BSV UN 표결 ideal point (파일 ID 고정)", "매월 4일", "없음", "collect_reference.py"),
-    ("IMF Data SDMX 2.1", "api.imf.org/external/sdmx/2.1 · IMF.STA,IMTS", "DOTS 양자 상품무역 (미·중 기준)", "매월 4일", "없음", "collect_reference.py"),
-    ("World Bank API v2", "api.worldbank.org/v2 · NY.GDP.MKTP.CD", "WDI 경상 GDP", "매월 4일", "없음", "collect_reference.py"),
-    ("Anthropic API", "claude-opus-5-5 (effort medium)", "AI 협력 사건 탐지·코딩·재검토 제안 (패널 2)", "매일", "ANTHROPIC_API_KEY", "collect_ai_coop.py · ai_coop_tasks.py"),
-    ("Google News RSS · Bing News", "news.google.com/rss/search · bing.com/news/search", "AI 협력 기사 탐지", "매일", "없음", "ai_coop_tasks.py"),
-    ("Internet Archive Wayback", "archive.org/wayback/available", "유료벽 기사 본문 대체 수집", "필요 시", "없음", "collect_ai_coop.py"),
-    ("GitHub REST API", "api.github.com/repos/…/issues", "판단 대기 페이지에서 제출한 결정 회수", "매일", "GITHUB_TOKEN (Actions 기본)", "ai_coop_tasks.py"),
-    ("GitHub Release “state”", "gh release download/upload", "master.parquet·예측 캐시·기준자료·사건 파일 보관", "매 실행", "GITHUB_TOKEN (Actions 기본)", "pipeline.yml"),
+    ("패널 1", "Global Trade Alert API v2", "api.globaltradealert.org/api/v2/gta/data/", "각국 정부의 무역·산업 개입 조치(intervention) 전량을 매일 받아 온다. 패널 1의 원자료.", "매일", "GTA_API_KEY", "auto_update.py"),
+    ("패널 1", "Hugging Face Hub", "industrialpolicygroup/industrialpolicy-classifier", "GTA 조치 설명문을 읽고 산업정책인지 가려내는 BERT 모델을 내려받는다(버전 고정). 새로 들어온 조치만 분류한다.", "매일", "없음", "auto_update.py"),
+    ("패널 1", "Harvard Dataverse", "dataverse.harvard.edu · doi:10.7910/DVN/LEJUQZ", "UN 총회 표결로 추정한 각국의 외교적 위치(BSV ideal point). 지정학적 거리와 블록 분류의 기준.", "매월 4일", "없음", "collect_reference.py"),
+    ("패널 1", "IMF Data SDMX 2.1", "api.imf.org/external/sdmx/2.1 · IMF.STA,IMTS", "미국·중국과 각국 사이의 상품무역액(DOTS). 산점도의 원 크기와 표본 절단에 쓴다.", "매월 4일", "없음", "collect_reference.py"),
+    ("패널 1", "World Bank API v2", "api.worldbank.org/v2 · NY.GDP.MKTP.CD", "각국 명목 GDP(WDI). 산점도 원 크기의 대안 지표.", "매월 4일", "없음", "collect_reference.py"),
+    ("패널 2", "Google News RSS · Bing News", "news.google.com/rss/search · bing.com/news/search", "한미 AI 협력 관련 최근 2일 기사를 찾는다. 새 사건 후보의 출발점.", "매일", "없음", "ai_coop_tasks.py"),
+    ("패널 2", "Internet Archive Wayback", "archive.org/wayback/available", "유료벽에 막힌 기사의 보관본을 대신 가져온다.", "필요 시", "없음", "collect_ai_coop.py"),
+    ("패널 2", "Anthropic API", "claude-opus-5-5 (effort medium)", "기사를 읽고 사건을 코딩(형태·주체·분야·금액)하고, 기존 사건의 후속·재검토를 제안한다. 반영은 연구자 승인 뒤에만.", "매일", "ANTHROPIC_API_KEY", "collect_ai_coop.py · ai_coop_tasks.py"),
+    ("패널 2", "GitHub REST API", "api.github.com/repos/…/issues", "판단 대기 페이지에서 제출한 승인·기각·보류(Issue)를 읽어 반영하고 Issue를 닫는다.", "매일", "GITHUB_TOKEN (Actions 기본)", "ai_coop_tasks.py"),
+    ("공통", "GitHub Release “state”", "gh release download/upload", "GTA 스냅숏·BERT 예측 캐시·기준자료·사건 파일을 보관한다. 매 실행의 시작점이자 결과 저장소.", "매 실행", "GITHUB_TOKEN (Actions 기본)", "pipeline.yml"),
+    ("공통", "Gmail SMTP", "smtp.gmail.com:465", "매일 실행 결과와 실패를 메일로 보낸다.", "매일", "MAIL_USER · MAIL_PASS", "pipeline.yml"),
 ]
 
 
@@ -382,10 +381,10 @@ def render_data(reports: list[Report]) -> str:
              ("ai_coop.json", "패널 2 — 사건 목록·집계·기관 목록")]
     rows = "".join(f'<tr><td><a href="{f}" download>{f}</a></td><td>{html.escape(d)}</td></tr>' for f, d in files)
     api_rows = "".join(
-        f'<tr><td>{html.escape(n)}<span class="small">{html.escape(ep)}</span><span class="small">{html.escape(where)}</span></td>'
+        f'<tr><td>{html.escape(panel)}</td><td>{html.escape(n)}<span class="small">{html.escape(ep)}</span><span class="small">{html.escape(where)}</span></td>'
         f'<td>{html.escape(use)}</td><td>{html.escape(when)}</td><td>{html.escape(key)}</td></tr>'
-        for n, ep, use, when, key, where in APIS)
-    body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Data</span><h1>자료와 코드</h1>'
+        for panel, n, ep, use, when, key, where in APIS)
+    body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Data</span><h1>자료의 출처</h1>'
             f'</div></header>'
             f'<section class="section"><div class="wrap grid grid-2"><div class="panel"><div class="panel-head">사이트 JSON</div>'
             f'<div class="panel-body"><table><tbody>{rows}</tbody></table></div></div>'
@@ -393,8 +392,8 @@ def render_data(reports: list[Report]) -> str:
             f'<p><a href="{repo}/releases/tag/state">Release “state”</a> — master.parquet(GTA 전량 + BERT 라벨), prediction_cache.json, state.json, 변경 리포트, 기준자료, AI 협력 사건 파일</p>'
             f'<p><a href="{repo}/actions">Actions</a> — 매일 06:00 KST 갱신·배포 기록</p>'
             f'<p><a href="codebook.html" class="btn">Codebook</a></p></div></div></div></section>'
-            f'<section class="section"><div class="wrap"><span class="eyebrow">APIs</span><div class="panel"><div class="panel-head">연결된 API</div>'
-            f'<div class="tablebox" style="border:0;margin:0"><table class="api-table"><thead><tr><th style="width:42%">API · 코드</th><th>용도</th><th style="width:11%">주기</th><th style="width:17%">키</th></tr></thead><tbody>{api_rows}</tbody></table></div>'
+            f'<section class="section"><div class="wrap"><span class="eyebrow" style="text-transform:none">APIs</span><div class="panel"><div class="panel-head" style="text-transform:none">연결된 APIs</div>'
+            f'<div class="tablebox" style="border:0;margin:0"><table class="api-table"><thead><tr><th style="width:11%">패널</th><th style="width:34%">API · 코드</th><th>무엇을 하나</th><th style="width:11%">주기</th><th style="width:15%">키</th></tr></thead><tbody>{api_rows}</tbody></table></div>'
             f'<div class="panel-body"><p class="note">키는 GitHub Secrets에만 있습니다. 코드에 담지 않습니다.</p></div></div></div></section>')
     return page(f"자료 · {SITE_TITLE}", body, current="data.html")
 

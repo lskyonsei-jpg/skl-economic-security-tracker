@@ -123,6 +123,13 @@ def nav(current: str) -> str:
             f'<span class="mark"></span>SKL Economic Security Tracker</a><div class="links">{items}</div></div></nav>')
 
 
+def with_last_update(body: str, date: str) -> str:
+    """히어로(</header>) 바로 아래 왼쪽에 작은 글씨로 Last update 를 넣는다. 날짜가 없으면 그대로."""
+    if not date or "</header>" not in body:
+        return body
+    return body.replace("</header>", f'</header><div class="wrap last-update">Last update {html.escape(date)}</div>', 1)
+
+
 def footer(asof: str, built: str) -> str:
     sha = os.environ.get("GIT_SHA", "")[:7]
     return (f'<footer class="site-footer"><div class="wrap"><span>SKL Economic Security Tracker · 연구용 자료</span>'
@@ -162,7 +169,8 @@ def render(agg: dict, meta: dict) -> str:
         f'<li><span>{html.escape(p["us"])}</span><span class="arrow">↔</span><span>{html.escape(p["kr"])}</span><span class="n">{p["n"]}</span></li>'
         for p in agg["pairs"][:15])
 
-    hero_meta = (f'<div class="meta"><div>사건<b>{n:,}건</b></div><div>기간<b>{agg["years"][0]}–{agg["years"][-1]}</b></div>'
+    hero_meta = ""   # 수치 없이 제목만 (연구자 지시 2026-10-22)
+    _unused = (f'<div class="meta"><div>사건<b>{n:,}건</b></div><div>기간<b>{agg["years"][0]}–{agg["years"][-1]}</b></div>'
                  f'<div>확정계약<b>{agg["form_total"].get("확정계약", 0)}건</b></div><div>확정 코딩<b>{agg["status"].get("confirmed", 0)}건</b></div><div>자료 기준<b>{html.escape(asof)}</b></div></div>')
 
     body = f'''
@@ -238,6 +246,7 @@ def _page(title: str, hero_meta: str, body: str, asof: str, built: str) -> str:
 <body>{nav("ai_coop.html")}
 <header class="hero"><div class="wrap"><span class="eyebrow">Panel 2</span><h1>{html.escape(title)}</h1>
 {hero_meta}</div></header>
+{with_last_update("</header>", asof)[len("</header>"):]}
 {body}
 {footer(asof, built)}
 </body></html>'''
@@ -356,8 +365,8 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
 </script>""" % json.dumps(REPO)
     body = "".join(sections) + howto + submit_bar + script
     head = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<title>판단 대기 · SKL</title><link rel="stylesheet" href="site.css"></head>\n'
-    hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Review queue</span><h1>판단 대기</h1>'
-            + hero_meta + '</div></header>\n')
+    hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Review queue</span><h1>판단 대기</h1></div></header>'
+            + with_last_update("</header>", built[:10])[len("</header>"):] + '\n')
     return head + "<body>" + nav("review.html") + "\n" + hero + body + "\n" + footer("", built) + "\n</body></html>"
 
 
