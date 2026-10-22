@@ -80,6 +80,15 @@ API_NESTED_FIELDS = {
     "affected_products": ("affected_products", "product_id", ", "),
 }
 DESCRIPTION_COLUMN = "intervention_description"
+# 2026-10-22: GTA 가 공지 없이 응답에서 뺀 필드. 없으면 결측으로 두고 소리 내어 알린다.
+# inferred_jurisdictions = AJ 등록 방식(Targeted/Inferred/Excluded/Incidental). 산업정책 화면의
+# "Targeted만 보기"가 이 값을 쓴다. 결측이면 그 행은 토글에서 빠진다(없는 값을 만들지 않는다).
+OPTIONAL_API_FIELDS = {"inferred_jurisdictions"}
+# 이름이 바뀐 경우 여기에 (새 이름 -> 옛 이름)을 적으면 flatten 이 되돌린다. 저장 열 이름은 바꾸지 않는다.
+# 2026-10-22: GTA 가 inferred_jurisdictions 를 affected_jurisdictions_type 으로 바꿨다(OpenAPI 스키마
+# InterventionFullListPublicSerializerV2, 값은 Targeted/Inferred/Excluded/Incidental 그대로). 같은 때
+# distorted_markets·distorted_markets_type 이 추가됐으나 아직 쓰지 않는다.
+RENAMED_API_FIELDS: dict[str, str] = {"affected_jurisdictions_type": "inferred_jurisdictions"}
 
 COLUMN_ORDER = [
     "intervention_id", "state_act_id", "state_act_title",
@@ -473,10 +482,18 @@ def join_nested(value, key: str, separator: str):
 
 def flatten(rows: list[dict]) -> pd.DataFrame:
     raw = pd.DataFrame(strip_html_fields(rows))
+    raw = raw.rename(columns={new: old for new, old in RENAMED_API_FIELDS.items() if new in raw.columns})
     required = set(API_SCALAR_FIELDS) | set(API_NESTED_FIELDS) | {DESCRIPTION_COLUMN}
     missing = required - set(raw.columns)
+    optional_missing = sorted(missing & OPTIONAL_API_FIELDS)
+    for field in optional_missing:
+        raw[field] = pd.NA
+        say(f"    주의: GTA API 응답에 {field} 가 없습니다. 결측으로 둡니다 (받은 필드 {len(raw.columns)}개)")
+    missing -= OPTIONAL_API_FIELDS
     if missing:
+        say(f"    받은 필드: {sorted(raw.columns)}")
         fail(f"GTA API 응답에 필수 필드가 없습니다: {sorted(missing)}")
+    flatten.missing_optional = optional_missing  # 매니페스트용
 
     out = pd.DataFrame(index=raw.index)
     for field in API_SCALAR_FIELDS:
@@ -1692,6 +1709,7 @@ def main() -> int:
         "missing_descriptions_count": missing_desc,
         "missing_descriptions_share": missing_desc / len(current),
         "newly_classified_descriptions": newly_classified,
+        "missing_api_fields": getattr(flatten, "missing_optional", []),
         "removals_checked": removals_checked,
         "changes": {
             "new": len(diff["new"]),
