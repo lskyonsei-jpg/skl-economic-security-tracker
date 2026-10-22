@@ -1,0 +1,322 @@
+"""한미 AI 협력 트래커 — 사건 수집·코딩. 설계: 문서/20261022_설계_한미AI협력트래커_자동화.md
+
+  python collect_ai_coop.py seed                       data/seed/*.csv -> data/ai_coop_events.json (연구자 확정 코딩)
+  python collect_ai_coop.py recode [--effort high] [--limit N]
+                                                       표본 사건의 원문을 다시 받아 Task A 로 코딩하고 연구자 코딩과 대조
+  (예정) discover / run                                 신규 기사 탐지 -> Task A/B -> 병합 -> 게시
+
+모델: claude-opus-5-5 (연구자 확정 2026-10-22). 구조화 출력(output_config.format)으로 스키마를 강제한다.
+키:   환경변수 ANTHROPIC_API_KEY (GitHub Secrets). 로컬에는 없으므로 recode 는 CI 에서 돈다.
+비용 안전장치: 한 번 실행에 MAX_CALLS 회 이상 호출하지 않는다.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+DATA = HERE / "data"
+SEED_DIR = DATA / "seed"
+EVENTS = DATA / "ai_coop_events.json"
+MODEL = "claude-opus-5-5"
+MAX_CALLS = int(os.environ.get("AI_COOP_MAX_CALLS", "120"))
+
+FORMS = ["MOU·의향", "선언", "집행", "확정계약"]
+TRACKS = ["정부", "민간", "정부-민간"]
+SECTORS = ["AI데이터센터", "피지컬AI·로봇", "통상·규제", "파운드리", "반도체·메모리", "AI모델·SW", "안보·국방", "전력·인프라", "인재"]
+ADMINISTRATIONS = [("2025-01-20", "트럼프 2기"), ("2021-01-20", "바이든"), ("2017-01-20", "트럼프 1기"), ("2009-01-20", "오바마")]
+# 시스템 프롬프트 예시로 쓰는 표본 사건(연구자 확정). 정확도 측정에서는 제외한다.
+EXAMPLE_TITLES = [
+    "삼성전자–테슬라 AI 칩 파운드리 계약(165억 달러)",
+    "현대차그룹–엔비디아 전략적 파트너십(CES 2025)",
+    "현대차·기아–엔비디아 자율주행 파트너십 확대",
+    "삼성 테일러 팭, 테슬라 칩 2027년 하반기 양산 계획",
+    "삼성전자–구글 클라우드 생성AI 파트너십(갤럭시 S24)",
+    "한미 정상 공동성명(윤석열-바이든) — AI·반도체·자율로봇 협력 명시",
+    "한미 차세대 핵심·신흥기술 대화(NCET) 출범",
+    "AWS, 한국에 2027년까지 59억 달러 추가 투자 발표",
+    "미국 CHIPS and Science Act 서명(삼성·SK 영향)",
+    "과기정통부·현대차그룹–엔비디아 피지컬 AI MOU",
+]
+
+
+def administration(date: str) -> str:
+    for start, name in ADMINISTRATIONS:
+        if date >= start:
+            return name
+    return "이전"
+
+
+def split_parties(v) -> list[str]:
+    if v is None or (isinstance(v, float)) or str(v).strip() in ("", "nan"):
+        return []
+    return [p.strip() for p in str(v).split(",") if p.strip()]
+
+
+# ------------------------------------------------------------------ seed
+
+
+def load_seed_rows() -> list[dict]:
+    rows = []
+    for path in sorted(SEED_DIR.glob("*.csv")):
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            rows += list(csv.DictReader(fh))
+    return rows
+
+
+def seed_to_events(rows: list[dict]) -> list[dict]:
+    events = []
+    for r in rows:
+        amount = r.get("규모(억 달러)", "").strip()
+        events.append({
+            "id": r["id"], "date": r["일자"],
+            "us_parties": split_parties(r["미국 주체"]), "kr_parties": split_parties(r["한국 주체"]),
+            "track": r["트랙"].strip(), "form": r["형태"].strip(), "sectors": split_parties(r["분야"]),
+            "title": r["내용"].strip(), "summary": "", "note": r.get("비고", "").strip(),
+            "amount_usd_bn": float(amount) if amount else None, "amount_is_estimate": False,
+            "sources": [{"url": r["원문 링크"].strip(), "grade": None}] if r.get("원문 링크", "").strip() else [],
+            "administration": administration(r["일자"]),
+            "status": "confirmed", "lifecycle": "announced", "confidence": 1.0,
+            "coded_by": "researcher", "coded_at": "2026-10-22", "model": None,
+            "prior_event_id": None, "updates": [],
+        })
+    events.sort(key=lambda e: (e["date"], e["title"]))
+    return events
+
+
+def cmd_seed() -> int:
+    rows = load_seed_rows()
+    events = seed_to_events(rows)
+    DATA.mkdir(exist_ok=True)
+    EVENTS.write_text(json.dumps({"as_of": datetime.now(timezone.utc).isoformat(), "events": events},
+                                 ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"[seed] {len(events)}건 -> {EVENTS.relative_to(HERE)}")
+    return 0
+
+
+# ------------------------------------------------------------------ Task A 프롬프트
+
+
+SYSTEM_RULES = """당신은 한미 AI 협력 사건 데이터베이스의 코딩 보조자다. 기사 한 건을 읽고 스키마에 맞는 사건 하나를 추출한다. 기사에 없는 사실을 만들지 않는다.
+
+[사건의 정의]
+미국 측 주체와 한국 측 주체가 모두 명시된, AI·반도체·데이터센터·로봇·AI 규제 관련 협력 또는 거래. 한쪽만 있으면 is_event=false. 미국 국내법·정책이 한국 기업에 영향을 주는 것(예: CHIPS Act)은 양측 주체가 있어도 track=정부, form=선언, sectors 에 통상·규제를 넣는다.
+
+[form 판정 — 기사 문면의 구속력 기준]
+- 확정계약: 계약 체결·지분 취득·인수 완료·공급계약 서명이 명시. 금액이나 지분율이 있으면 강한 근거.
+- 집행: 이미 체결된 계약·협약의 이행 사실(양산 개시, 제품 출시, 인수 완료 후 통합, 공급 진행). 선행 사건이 있으면 prior_event_hint 에 적는다.
+- MOU·의향: 파트너십·협력 발표이나 계약 조건이 비공개이거나 "본계약은 별도 체결" 문구가 있는 것. LOI, 양해각서, 투자 의향.
+- 선언: 정부 공동성명·팩트시트·회담·정상회의·협의체 출범·투자 발표(기업이 금액만 밝히고 계약 상대가 없는 투자 계획 포함).
+판정이 두 범주 사이면 더 약한 쪽(선언 < MOU·의향 < 집행 < 확정계약)을 고르고 confidence 를 낮춘다.
+
+[track] 정부 / 민간 / 정부-민간. 정부 기관이 당사자로 서명·발표하면 정부. 정부와 기업이 함께 당사자면 정부-민간.
+[sectors] AI데이터센터, 피지컬AI·로봇, 통상·규제, 파운드리, 반도체·메모리, AI모델·SW, 안보·국방, 전력·인프라, 인재. 복수 가능. 기사에 근거가 있는 것만.
+[parties] 기관명은 기사 표기 그대로. 정부는 "정부(미국)", "정부(한국)" 또는 부처명(과기정통부, 백악관 등). 그룹 계열사는 기사에 나온 법인만. 한국 측 주체가 미국 법인의 자회사인 경우도 한국 측으로 둔다.
+[amount_usd_bn] 억 달러 단위 숫자. 기사에 달러 금액이 명시된 경우만. 원화만 있으면 amount_krw_bn 에 억 원으로 적고 달러 환산은 하지 않는다. "수십억", "최대" 같은 범위면 null 로 두고 note 에 적는다.
+[date] 발표일(YYYY-MM-DD). 기사 게재일과 다르면 발표일.
+[title] 20자 안팎, "주체–주체, 내용(금액)" 형식. [summary] 2~3문장, 기사 사실만.
+[confidence] 0~1. form 판정과 주체 식별이 모두 분명하면 0.9 이상, 어느 하나가 기사 문면으로 확정되지 않으면 0.6 이하.
+[source_grade] 기사가 정부·기업의 1차 발표(보도자료·공시·공식 뉴스룸)면 1, 언론 보도면 2.
+
+[예시] 아래는 연구자가 확정한 코딩이다. 같은 기준을 적용한다. 각 예시의 '기사 요지'는 연구자 메모이며, 실제 입력은 기사 본문이다.
+"""
+
+OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_event": {"type": "boolean"},
+        "date": {"type": ["string", "null"], "description": "YYYY-MM-DD"},
+        "us_parties": {"type": "array", "items": {"type": "string"}},
+        "kr_parties": {"type": "array", "items": {"type": "string"}},
+        "track": {"type": ["string", "null"], "enum": TRACKS + [None]},
+        "form": {"type": ["string", "null"], "enum": FORMS + [None]},
+        "sectors": {"type": "array", "items": {"type": "string", "enum": SECTORS}},
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "amount_usd_bn": {"type": ["number", "null"]},
+        "amount_is_estimate": {"type": "boolean"},
+        "amount_krw_bn": {"type": ["number", "null"]},
+        "source_grade": {"type": "integer", "enum": [1, 2]},
+        "prior_event_hint": {"type": ["string", "null"]},
+        "confidence": {"type": "number"},
+        "note": {"type": "string"},
+    },
+    "required": ["is_event", "date", "us_parties", "kr_parties", "track", "form", "sectors", "title", "summary",
+                 "amount_usd_bn", "amount_is_estimate", "amount_krw_bn", "source_grade", "prior_event_hint",
+                 "confidence", "note"],
+    "additionalProperties": False,
+}
+
+
+def build_system(events: list[dict]) -> str:
+    by_title = {e["title"]: e for e in events}
+    parts = [SYSTEM_RULES]
+    for i, title in enumerate(EXAMPLE_TITLES, 1):
+        e = by_title.get(title)
+        if not e:
+            continue
+        answer = {"is_event": True, "date": e["date"], "us_parties": e["us_parties"], "kr_parties": e["kr_parties"],
+                  "track": e["track"], "form": e["form"], "sectors": e["sectors"], "title": e["title"],
+                  "amount_usd_bn": e["amount_usd_bn"]}
+        parts.append(f"예시 {i}. 기사 요지: {e['note'][:400]}\n정답: {json.dumps(answer, ensure_ascii=False)}\n")
+    return "\n".join(parts)
+
+
+def code_article(client, system: str, meta: dict, body: str, effort: str) -> tuple[dict, dict]:
+    """기사 하나를 Task A 로 코딩한다. (결과, usage)"""
+    user = (f"[기사 메타]\nURL: {meta.get('url', '')}\n매체/도메인: {meta.get('domain', '')}\n게재일(참고): {meta.get('published', '')}\n"
+            f"제목: {meta.get('title', '')}\n\n[본문]\n{body}")
+    response = client.messages.create(
+        model=MODEL, max_tokens=4000,
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user}],
+        output_config={"effort": effort, "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
+    )
+    usage = {"input": response.usage.input_tokens, "output": response.usage.output_tokens,
+             "cache_read": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
+             "cache_write": getattr(response.usage, "cache_creation_input_tokens", 0) or 0}
+    if response.stop_reason == "refusal":
+        return {"is_event": False, "note": "refusal", "refusal": True}, usage
+    text = next(b.text for b in response.content if b.type == "text")
+    return json.loads(text), usage
+
+
+# ------------------------------------------------------------------ 본문 수집
+
+
+def fetch_body(url: str) -> tuple[str, dict]:
+    import trafilatura
+    downloaded = trafilatura.fetch_url(url)
+    if not downloaded:
+        return "", {}
+    text = trafilatura.extract(downloaded, include_comments=False, favor_recall=True) or ""
+    meta = trafilatura.extract_metadata(downloaded)
+    info = {"title": getattr(meta, "title", "") or "", "published": getattr(meta, "date", "") or "",
+            "domain": getattr(meta, "sitename", "") or re.sub(r"^https?://([^/]+).*$", r"\1", url)}
+    return text.strip(), info
+
+
+def clip(body: str, head: int = 6000, tail: int = 2000) -> str:
+    # 토큰이 아니라 글자 기준의 느슨한 상한(한글 1자 ≈ 1~2토큰). 8천 자를 넘으면 앞·뒤만 남긴다.
+    return body if len(body) <= head + tail else body[:head] + "\n...(중략)...\n" + body[-tail:]
+
+
+# ------------------------------------------------------------------ recode
+
+
+def norm(s: str) -> str:
+    return re.sub(r"[\s·\-–()（）]", "", s).lower()
+
+
+def jaccard(a: list[str], b: list[str]) -> float:
+    A, B = {norm(x) for x in a}, {norm(x) for x in b}
+    return len(A & B) / len(A | B) if A | B else 1.0
+
+
+def cmd_recode(effort: str, limit: int | None) -> int:
+    import anthropic
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("[recode] ANTHROPIC_API_KEY 없음"); return 1
+    if not EVENTS.is_file():
+        cmd_seed()
+    events = json.loads(EVENTS.read_text(encoding="utf-8"))["events"]
+    system = build_system(events)
+    client = anthropic.Anthropic()
+    out_path = DATA / f"ai_coop_recode_{effort}.json"
+    results, calls, usage_total = [], 0, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    started = time.monotonic()
+    targets = [e for e in events if e["sources"]][: (limit or None)]
+    for e in targets:
+        url = e["sources"][0]["url"]
+        body, meta = fetch_body(url)
+        meta["url"] = url
+        rec = {"id": e["id"], "title": e["title"], "url": url, "in_examples": e["title"] in EXAMPLE_TITLES,
+               "truth": {"form": e["form"], "track": e["track"], "sectors": e["sectors"],
+                         "us": e["us_parties"], "kr": e["kr_parties"], "amount": e["amount_usd_bn"], "date": e["date"]}}
+        if len(body) < 300:
+            rec["fetch"] = "failed"; rec["body_chars"] = len(body)
+            results.append(rec); print(f"  [본문 실패] {e['date']} {e['title'][:40]} ({len(body)}자)"); continue
+        if calls >= MAX_CALLS:
+            rec["fetch"] = "skipped_max_calls"; results.append(rec); continue
+        try:
+            pred, usage = code_article(client, system, meta, clip(body), effort)
+        except anthropic.APIStatusError as exc:
+            rec["fetch"] = "ok"; rec["error"] = f"{exc.status_code} {exc.message}"; results.append(rec); continue
+        calls += 1
+        for k in usage_total: usage_total[k] += usage[k]
+        rec["fetch"] = "ok"; rec["body_chars"] = len(body); rec["pred"] = pred
+        rec["match"] = {
+            "is_event": bool(pred.get("is_event")),
+            "form": pred.get("form") == e["form"], "track": pred.get("track") == e["track"],
+            "sectors_jaccard": round(jaccard(pred.get("sectors", []), e["sectors"]), 2),
+            "us_jaccard": round(jaccard(pred.get("us_parties", []), e["us_parties"]), 2),
+            "kr_jaccard": round(jaccard(pred.get("kr_parties", []), e["kr_parties"]), 2),
+            "amount": (pred.get("amount_usd_bn") == e["amount_usd_bn"]),
+            "date": pred.get("date") == e["date"],
+        }
+        results.append(rec)
+        m = rec["match"]
+        print(f"  {e['date']} {e['title'][:34]:<34} form {'O' if m['form'] else 'X'}({pred.get('form')}) track {'O' if m['track'] else 'X'} "
+              f"sec {m['sectors_jaccard']} us {m['us_jaccard']} kr {m['kr_jaccard']} amt {'O' if m['amount'] else 'X'} conf {pred.get('confidence')}")
+        time.sleep(0.5)
+
+    coded = [r for r in results if "match" in r]
+    held = [r for r in coded if not r["in_examples"]]
+    def rate(rs, key): return (sum(1 for r in rs if r["match"][key] is True) / len(rs)) if rs else None
+    def mean(rs, key): return (sum(r["match"][key] for r in rs) / len(rs)) if rs else None
+    summary = {
+        "effort": effort, "model": MODEL, "targets": len(targets), "fetched": len(coded),
+        "fetch_failed": sum(1 for r in results if r.get("fetch") == "failed"),
+        "errors": sum(1 for r in results if "error" in r), "calls": calls, "usage": usage_total,
+        "cost_usd": round(usage_total["input"] * 4 / 1e6 + usage_total["output"] * 20 / 1e6
+                          + usage_total["cache_read"] * 0.2 / 1e6 + usage_total["cache_write"] * 5 / 1e6, 3),
+        "seconds": round(time.monotonic() - started),
+        "heldout_n": len(held),
+        "heldout": {"form": rate(held, "form"), "track": rate(held, "track"), "sectors_jaccard": mean(held, "sectors_jaccard"),
+                    "us_jaccard": mean(held, "us_jaccard"), "kr_jaccard": mean(held, "kr_jaccard"), "amount": rate(held, "amount"),
+                    "date": rate(held, "date"), "is_event": rate(held, "is_event")},
+        "examples_n": len(coded) - len(held),
+        "examples": {"form": rate([r for r in coded if r["in_examples"]], "form")},
+    }
+    out_path.write_text(json.dumps({"summary": summary, "results": results}, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(json.dumps(summary, ensure_ascii=False, indent=1))
+    step = os.environ.get("GITHUB_STEP_SUMMARY")
+    if step:
+        h = summary["heldout"]
+        with open(step, "a", encoding="utf-8") as fh:
+            fh.write(f"## 한미 AI 협력 — 표본 재코딩 ({effort})\n\n"
+                     f"- 대상 {summary['targets']}건, 본문 확보 {summary['fetched']}건, 실패 {summary['fetch_failed']}건, 호출 {calls}회, 비용 ${summary['cost_usd']}\n"
+                     f"- 보류 표본(예시 제외) {summary['heldout_n']}건 일치율: form {h['form']}, track {h['track']}, sectors J {h['sectors_jaccard']}, "
+                     f"미국 주체 J {h['us_jaccard']}, 한국 주체 J {h['kr_jaccard']}, 금액 {h['amount']}, 날짜 {h['date']}\n\n"
+                     "| 날짜 | 사건 | form 정답 | form 예측 | track | sectors J | conf |\n|---|---|---|---|---|---|---|\n")
+            for r in coded:
+                m, p = r["match"], r["pred"]
+                fh.write(f"| {r['truth']['date']} | {r['title'][:40]}{' (예시)' if r['in_examples'] else ''} | {r['truth']['form']} | {p.get('form')} | "
+                         f"{'O' if m['track'] else 'X'} | {m['sectors_jaccard']} | {p.get('confidence')} |\n")
+            failed = [r for r in results if r.get("fetch") == "failed"]
+            if failed:
+                fh.write("\n본문 확보 실패: " + ", ".join(f"{r['title'][:30]}" for r in failed) + "\n")
+    return 0
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("seed")
+    r = sub.add_parser("recode"); r.add_argument("--effort", default="high", choices=["low", "medium", "high"]); r.add_argument("--limit", type=int)
+    a = p.parse_args()
+    if a.cmd == "seed":
+        return cmd_seed()
+    return cmd_recode(a.effort, a.limit)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

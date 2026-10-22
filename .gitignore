@@ -16,6 +16,9 @@ site_prev/
 # 공개 저장소에 두지 않는 것(저작권 자료, 로컬 사본만)
 reference/OECD_2019_Measuring_distortions_semiconductor_value_chain.pdf
 
-# 수집 원자료(Comtrade, GTA Threads, Notion). Release "state" 자산으로 보관
-data/
+# 수집 원자료(Comtrade, GTA Threads, 기준자료, AI 협력 사건). Release "state" 자산으로 보관.
+# data/seed/ 와 data/ai_coop_overrides.csv 만 git 에 둔다.
+data/*
+!data/ai_coop_overrides.csv
 .claude/
+!data/seed/

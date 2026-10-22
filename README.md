@@ -10,17 +10,17 @@
 | 패널 | 자료 | 빌더 |
 |---|---|---|
 | 1. Distortive Industrial Policy Tracker | GTA(매일 API) × BSV ideal point(Dataverse) × IMF DOTS·WDI(API, 월 1회 `collect_reference.py`) | `industrial_policy_site.py` → `ip_risk_site.py` + `ip_risk_template.html` |
-| 2. 한미 AI 협력 트래커 | Notion DB(야간 1회 읽기) | `ai_coop_site.py` |
+| 2. 한미 AI 협력 트래커 | `data/seed/` 연구자 확정 코딩 + Claude 자동 코딩(`collect_ai_coop.py`, 구축 중) | `ai_coop_site.py` |
 
 반도체 지도·석유·태양광·석유 검증 화면은 코드만 남아 있다(`SITE_EXTRA_PANELS=1` 로 빌드하면 생성). 석유·태양광은 Comtrade 원자료가 있어야 한다.
 
 ## 파이프라인 (`.github/workflows/pipeline.yml`)
 
-1. Release `state` 자산 내려받기 — `master.parquet`(GTA 전량 + BERT 라벨), `prediction_cache.json`, `state.json`, `logs.tar.gz`(변경 리포트), `reference.tar.gz`(BSV·DOTS·WDI), 있으면 `comtrade.tar.gz`·`ai_coop.json`
+1. Release `state` 자산 내려받기 — `master.parquet`(GTA 전량 + BERT 라벨), `prediction_cache.json`, `state.json`, `logs.tar.gz`(변경 리포트), `reference.tar.gz`(BSV·DOTS·WDI), 있으면 `comtrade.tar.gz`·`ai_coop_events.json`
 2. `auto_update.py --mode incremental|full --yes` — GTA API 수집, BERT 분류(새 건만), 직전 스냅숏과 대조, 변경 리포트. 일요일은 full(전량 재대조, 삭제 확인)
    - 멈춤 조건(`guard()`): 수출통제 9종 유형명 0건, `intervention_id` 결측, 열 수 불일치, 표본 5% 초과 감소, full 삭제 500건 초과 → 실패, Release 는 그대로
 3. 매월 4일: `collect_reference.py`(BSV·IMF DOTS·WDI, 키 불필요), `collect_comtrade.py`(키 있을 때)
-4. `ai_coop_site.py fetch`(Notion 비밀값 있을 때)
+4. (수동 입력 `ai_coop`) `collect_ai_coop.py recode` — 표본 재코딩으로 모델 정확도 측정. 자동 수집(Task A/B)은 설계 문서대로 구축 중
 5. 바뀐 자산만 Release `state` 에 다시 올림
 6. `publish_site.py` → `site/` → GitHub Pages
 
@@ -31,10 +31,10 @@
 | 이름 | 용도 | 없으면 |
 |---|---|---|
 | `GTA_API_KEY` | GTA 수집 | 파이프라인 실패 |
-| `NOTION_TOKEN`, `NOTION_DB_ID` | 패널 2 | 패널 2 가 "연결 전" 화면 |
+| `ANTHROPIC_API_KEY` | 패널 2 자동 코딩(Claude Opus 5.5) | 재코딩·자동 수집 단계 건너뜀 |
 | `COMTRADE_API_KEY` | 석유·태양광 원자료(현재 미사용 패널) | 수집 건너뜀 |
 
-Notion: 통합(integration)을 만들어 DB 페이지에 연결(Share → Connections)한 뒤 토큰과 DB ID 를 넣는다. 열 이름이 바뀌면 `ai_coop_site.py` 의 `PROPERTY_ALIASES` 를 고친다.
+패널 2 설계(탐지·코딩·갱신·게시)는 `문서/20261022_설계_한미AI협력트래커_자동화.md`.
 
 ## 상태 보관
 
