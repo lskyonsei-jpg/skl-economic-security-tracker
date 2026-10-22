@@ -20,6 +20,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 EVENTS = HERE / "data" / "ai_coop_events.json"
+REPO = "lskyonsei-jpg/skl-economic-security-tracker"
 FORM_ORDER = ["MOU·의향", "선언", "집행", "확정계약"]
 # 미국 행정부 경계(타임라인 세로선). 취임일 기준.
 ADMINISTRATIONS = [("오바마", "2009-01-20"), ("트럼프 1기", "2017-01-20"), ("바이든", "2021-01-20"), ("트럼프 2기", "2025-01-20")]
@@ -236,7 +237,12 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                 f'<span>{link}</span></div>'
                 f'<div class="panel-body">{body}'
                 f'<p class="note" style="margin-top:10px">근거({_esc(e.get("via", ""))}, {_esc(e.get("chars", ""))}자, sha256 {_esc(str(e.get("sha256", ""))[:12])}): {_esc(str(e.get("excerpt", ""))[:300])}…</p>'
-                f'<p class="small">결정: <code>{_esc(p["id"])},approve,,</code> 또는 <code>{_esc(p["id"])},reject,,</code></p></div></div>')
+                f'<div class="decide" data-id="{_esc(p["id"])}">'
+                f'<label><input type="radio" name="d-{_esc(p["id"])}" value="approve"> 승인</label>'
+                f'<label><input type="radio" name="d-{_esc(p["id"])}" value="reject"> 기각</label>'
+                f'<label><input type="radio" name="d-{_esc(p["id"])}" value="hold"> 보류</label>'
+                f'<textarea data-note="{_esc(p["id"])}" placeholder="의견이나 수정 지시 (예: 금액은 20으로, 형태는 집행이 맞음, 주체에 기아 추가)"></textarea>'
+                f'</div></div></div>')
     sections = []
     titles = {"A": "새 사건 후보", "B": "기존 사건 갱신 후보", "C": "기존 판단 재검토"}
     for k in ("A", "B", "C"):
@@ -276,11 +282,38 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
             cards.append(card(p, body))
         sections.append(f'<section class="section"><div class="wrap"><span class="eyebrow">{k}. {titles[k]} ({len(items)}건)</span>'
                         + ("".join(cards) if cards else '<div class="empty">없음</div>') + '</div></section>')
-    howto = ('<section class="section"><div class="wrap"><details open><summary>결정 방법</summary><p class="note">'
-             '저장소의 <code>data/ai_coop_decisions.csv</code> 에 한 줄씩 추가한다(GitHub 웹 편집). 열은 <code>proposal_id,decision,note,date</code>, decision 은 approve 또는 reject. '
-             '다음 자동 실행(매일 06:00 KST)이 반영하고 이 페이지에서 사라진다. 승인된 A 는 사건으로 추가(상태 "확정", 코딩 주체 모델·승인자 연구자), B 는 후속 사건 추가 또는 값 갱신, C 는 값 갱신. '
-             '모든 반영은 사건의 updates 이력에 근거 URL 과 함께 남는다. AI 는 어떤 것도 스스로 반영하지 않는다.</p></details></div></section>')
-    body = "".join(sections) + howto
+    howto = ('<section class="section"><div class="wrap"><details><summary>결정 방법</summary><p class="note">'
+             '카드마다 승인·기각·보류를 고르고 의견이나 수정 지시를 적은 뒤 아래 "GitHub으로 결정 제출"을 누른다. 결정이 미리 채워진 GitHub 화면이 열리고 초록 버튼 한 번이면 제출된다(GitHub 로그인만 필요). '
+             '다음 자동 실행(매일 06:00 KST)이 제출을 회수해 반영한다. 승인은 그대로 반영, 의견에 수정 지시가 있으면 그 지시대로 값을 고쳐 반영하며 근거에 "연구자 의견"으로 남긴다. 기각은 기록만 한다. 보류는 다음 날에도 남는다. '
+             '입력은 이 브라우저에 임시 저장된다. 대신 <code>data/ai_coop_decisions.csv</code> 를 직접 편집해도 된다. AI 는 어떤 것도 스스로 반영하지 않는다.</p></details></div></section>')
+    submit_bar = ('<div class="submit-bar"><span id="decided-count">선택 0건</span><span class="hint">제출 후 이 화면의 선택은 비워진다</span>'
+                  '<span><button class="btn" id="clear-decisions" type="button">비우기</button> <button class="btn" id="copy-csv" type="button">CSV 복사</button> '
+                  '<button class="btn solid" id="submit-decisions" type="button">GitHub으로 결정 제출</button></span></div>')
+    script = """
+<script>
+(function(){
+  const KEY='aicoop-decisions-v1'; const REPO=%s;
+  const load=()=>{try{return JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){return {}}};
+  const save=d=>{try{localStorage.setItem(KEY,JSON.stringify(d))}catch(e){}};
+  let D=load();
+  const cards=[...document.querySelectorAll('.decide')];
+  const count=()=>{const n=Object.values(D).filter(x=>x.decision).length;document.getElementById('decided-count').textContent='선택 '+n+'건';};
+  cards.forEach(c=>{const id=c.dataset.id; const d=D[id]||{};
+    c.querySelectorAll('input[type=radio]').forEach(r=>{if(d.decision===r.value)r.checked=true; r.addEventListener('change',()=>{D[id]=Object.assign(D[id]||{},{decision:r.value});save(D);count();});});
+    const ta=c.querySelector('textarea'); if(d.note)ta.value=d.note; ta.addEventListener('input',()=>{D[id]=Object.assign(D[id]||{},{note:ta.value});save(D);});
+  });
+  count();
+  const lines=()=>Object.entries(D).filter(([id,d])=>d.decision||(d.note&&d.note.trim())).map(([id,d])=>'- '+id+': '+(d.decision||'hold')+(d.note&&d.note.trim()?' | 의견: '+d.note.trim().replace(/\\s*\\n+\\s*/g,' / '):''));
+  document.getElementById('submit-decisions').addEventListener('click',()=>{const L=lines(); if(!L.length){alert('선택된 결정이 없습니다.');return;}
+    const today=new Date().toISOString().slice(0,10); const body='## 결정 '+today+'\\n\\n'+L.join('\\n')+'\\n\\n(판단 대기 페이지에서 제출. 다음 자동 실행이 반영.)';
+    const url='https://github.com/'+REPO+'/issues/new?labels=ai-coop-decision&title='+encodeURIComponent('[결정] '+today)+'&body='+encodeURIComponent(body);
+    window.open(url,'_blank'); D={}; save(D); cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false); c.querySelector('textarea').value='';}); count();});
+  document.getElementById('copy-csv').addEventListener('click',()=>{const rows=Object.entries(D).filter(([id,d])=>d.decision).map(([id,d])=>id+','+d.decision+',"'+(d.note||'').replace(/"/g,'""')+'",'+new Date().toISOString().slice(0,10));
+    navigator.clipboard.writeText(rows.join('\\n')).then(()=>alert(rows.length+'줄을 복사했습니다. data/ai_coop_decisions.csv 에 붙여 넣으세요.'));});
+  document.getElementById('clear-decisions').addEventListener('click',()=>{D={};save(D);cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false);c.querySelector('textarea').value='';});count();});
+})();
+</script>""" % json.dumps(REPO)
+    body = "".join(sections) + howto + submit_bar + script
     head = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<title>판단 대기 · SKL</title><link rel="stylesheet" href="site.css"></head>\n'
     hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Review queue</span><h1>판단 대기</h1>'
             '<p>자동 탐지·코딩이 낸 제안입니다. A 는 새 사건 후보, B 는 기존 사건의 후속·수정·진행 상태, C 는 기존 판단과 모델 판정이 다른 경우입니다. 연구자가 승인해야 반영됩니다.</p>'

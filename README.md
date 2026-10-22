@@ -10,7 +10,7 @@
 | 패널 | 자료 | 빌더 |
 |---|---|---|
 | 1. Distortive Industrial Policy Tracker | GTA(매일 API) × BSV ideal point(Dataverse) × IMF DOTS·WDI(API, 월 1회 `collect_reference.py`) | `industrial_policy_site.py` → `ip_risk_site.py` + `ip_risk_template.html` |
-| 2. 한미 AI 협력 트래커 | `data/seed/` 연구자 확정 코딩 + Claude 자동 코딩(`collect_ai_coop.py`, 구축 중) | `ai_coop_site.py` |
+| 2. 한미 AI 협력 트래커 | `data/seed/` 연구자 확정 코딩 + 매일 자동 제안(`ai_coop_tasks.py`, 연구자 승인 후 반영) | `ai_coop_site.py` |
 
 반도체 지도·석유·태양광·석유 검증 화면은 코드만 남아 있다(`SITE_EXTRA_PANELS=1` 로 빌드하면 생성). 석유·태양광은 Comtrade 원자료가 있어야 한다.
 
@@ -20,7 +20,7 @@
 2. `auto_update.py --mode incremental|full --yes` — GTA API 수집, BERT 분류(새 건만), 직전 스냅숏과 대조, 변경 리포트. 일요일은 full(전량 재대조, 삭제 확인)
    - 멈춤 조건(`guard()`): 수출통제 9종 유형명 0건, `intervention_id` 결측, 열 수 불일치, 표본 5% 초과 감소, full 삭제 500건 초과 → 실패, Release 는 그대로
 3. 매월 4일: `collect_reference.py`(BSV·IMF DOTS·WDI, 키 불필요), `collect_comtrade.py`(키 있을 때)
-4. (수동 입력 `ai_coop`) `collect_ai_coop.py recode` — 표본 재코딩으로 모델 정확도 측정. 자동 수집(Task A/B)은 설계 문서대로 구축 중
+4. `ai_coop_tasks.py apply` → `daily` — 연구자 결정(사이트 판단 대기 페이지에서 제출한 Issue 또는 `data/ai_coop_decisions.csv`) 반영 후, 탐지 → A 새 사건·B 기존 사건 갱신·C 기존 판단 재검토 제안을 `review.html` 에 게시. AI 는 직접 반영하지 않는다
 5. 바뀐 자산만 Release `state` 에 다시 올림
 6. `publish_site.py` → `site/` → GitHub Pages
 

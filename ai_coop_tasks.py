@@ -13,7 +13,9 @@ B 는 후속 사건 추가 또는 필드 갱신·lifecycle 변경, C 는 필드 
 
 비용 상한: 하루 MAX_DAILY_CALLS 회. 상한에 닿으면 남은 작업은 다음 날로.
 필요한 환경변수: ANTHROPIC_API_KEY.
-결정 파일: data/ai_coop_decisions.csv — 열 proposal_id, decision(approve|reject), note, date. 한 줄이 한 결정.
+결정 경로 두 가지: (1) 사이트 판단 대기 페이지에서 제출한 GitHub Issue(라벨 ai-coop-decision, 본문 한 줄 = 한 결정)
+(2) data/ai_coop_decisions.csv — 열 proposal_id, decision(approve|reject|hold), note, date.
+의견(note)에 수정 지시가 있으면 Task D 가 모델로 제안 값을 고친 뒤 반영한다(연구자 의견이 우선). GH_TOKEN 이 있어야 Issue 를 읽는다.
 """
 from __future__ import annotations
 
@@ -417,7 +419,12 @@ def render_judgment(today: str, props: list[dict], budget: "Budget", stats: dict
     return "\n".join(lines)
 
 
+DECISION_WORDS = {"approve": "approved", "승인": "approved", "reject": "rejected", "기각": "rejected", "hold": "hold", "보류": "hold"}
+DECISION_LINE = re.compile(r"^[-*]?\s*([ABC]-\d{4}-\d{2}-\d{2}-\d{2}|[ABC]-\d{8}-\d{2})\s*[:：]\s*(approve|reject|hold|승인|기각|보류)\s*(?:\|\s*의견\s*[:：]\s*(.*))?\s*$", re.I | re.M)
+
+
 def read_decisions() -> dict[str, dict]:
+    """CSV 결정. {pid: {decision, note, date, source}}"""
     import csv
     if not DECISIONS.is_file():
         return {}
@@ -425,15 +432,101 @@ def read_decisions() -> dict[str, dict]:
     with DECISIONS.open(encoding="utf-8-sig", newline="") as fh:
         for r in csv.DictReader(fh):
             pid = (r.get("proposal_id") or "").strip()
-            d = (r.get("decision") or "").strip().lower()
-            if pid and d in ("approve", "reject", "승인", "기각"):
-                out[pid] = {"decision": "approved" if d in ("approve", "승인") else "rejected", "note": (r.get("note") or "").strip(), "date": (r.get("date") or "").strip()}
+            d = DECISION_WORDS.get((r.get("decision") or "").strip().lower())
+            if pid and d:
+                out[pid] = {"decision": d, "note": (r.get("note") or "").strip(), "date": (r.get("date") or "").strip(), "source": "csv"}
     return out
 
 
-def apply_proposal(p: dict, doc: dict, today: str) -> str:
+def _gh():
+    import requests
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not token or not repo:
+        return None, None
+    sess = requests.Session()
+    sess.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+    return sess, repo
+
+
+def read_issue_decisions() -> tuple[dict[str, dict], list[dict]]:
+    """사이트에서 제출한 Issue(라벨 ai-coop-decision). 저장소 소유자·협력자가 쓴 것만 인정한다."""
+    sess, repo = _gh()
+    if not sess:
+        return {}, []
+    issues = sess.get(f"https://api.github.com/repos/{repo}/issues", params={"labels": "ai-coop-decision", "state": "open", "per_page": 50}, timeout=30).json()
+    out, used = {}, []
+    for issue in issues if isinstance(issues, list) else []:
+        if issue.get("author_association") not in ("OWNER", "MEMBER", "COLLABORATOR"):
+            continue
+        n = 0
+        for m in DECISION_LINE.finditer(issue.get("body") or ""):
+            out[m.group(1)] = {"decision": DECISION_WORDS[m.group(2).lower()], "note": (m.group(3) or "").strip(),
+                               "date": (issue.get("created_at") or "")[:10], "source": f"issue#{issue['number']}"}
+            n += 1
+        if n:
+            used.append(issue)
+    return out, used
+
+
+D_SYSTEM = """당신은 한미 AI 협력 사건 데이터베이스의 보조자다. 모델이 낸 제안(사건 코딩)과 연구자의 의견을 받아, 의견에 담긴 수정 지시를 사건 값에 반영한 결과를 돌려준다.
+규칙: 연구자 의견이 모델 판정보다 우선한다. 의견이 언급하지 않은 필드는 바꾸지 않는다. 의견이 "맞다", "승인" 처럼 수정 지시가 아니면 아무것도 바꾸지 않는다.
+형태(form)는 MOU·의향/선언/집행/확정계약, track 은 정부-정부/정부-민간/민간-민간, 분야는 정해진 목록, 금액은 억 달러 숫자. 바꾼 필드마다 changes 에 field/old/new 를 적는다."""
+
+D_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "event": cc.EVENT_SCHEMA,
+        "changes": {"type": "array", "items": {"type": "object", "properties": {"field": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}},
+                                               "required": ["field", "old", "new"], "additionalProperties": False}},
+        "note": {"type": "string"},
+    },
+    "required": ["event", "changes", "note"],
+    "additionalProperties": False,
+}
+
+
+def revise_with_note(event: dict, note: str) -> tuple[dict, list[dict]]:
+    """Task D: 연구자 의견으로 제안 값을 고친다. 키가 없거나 실패하면 원안 그대로."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return event, []
+    import anthropic
+    client = anthropic.Anthropic()
+    base = {k: event.get(k) for k in cc.EVENT_SCHEMA["properties"]}
+    for k, v in cc.EVENT_SCHEMA["properties"].items():
+        if base.get(k) is None and v.get("type") == "array":
+            base[k] = []
+        if base.get(k) is None and v.get("type") == "string":
+            base[k] = ""
+        if base.get(k) is None and v.get("type") == "boolean":
+            base[k] = False
+        if base.get(k) is None and v.get("type") == "number":
+            base[k] = 0.5
+        if base.get(k) is None and v.get("type") == "integer":
+            base[k] = 2
+    user = f"[제안]\n{json.dumps(base, ensure_ascii=False)}\n\n[연구자 의견]\n{note}"
+    try:
+        r = client.messages.create(model=cc.MODEL, max_tokens=6000, system=D_SYSTEM, messages=[{"role": "user", "content": user}],
+                                   output_config={"effort": "medium", "format": {"type": "json_schema", "schema": D_SCHEMA}})
+        if r.stop_reason in ("refusal", "max_tokens"):
+            return event, []
+        out = json.loads(next(b.text for b in r.content if b.type == "text"))
+        ev = dict(event); ev.update(out["event"])
+        ev["us_parties"], _ = cc.canonical_parties(ev.get("us_parties", [])); ev["kr_parties"], _ = cc.canonical_parties(ev.get("kr_parties", []))
+        return ev, out.get("changes", [])
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [D 오류] {str(exc)[:120]}")
+        return event, []
+
+
+def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
     events = doc["events"]
     by_id = {e["id"]: e for e in events}
+    changed_by_note: list[dict] = []
+    if note and p["task"] == "A":
+        p["payload"], changed_by_note = revise_with_note(p["payload"], note)
+    if note and p["task"] == "B" and p["payload"].get("new_event"):
+        p["payload"]["new_event"], changed_by_note = revise_with_note(p["payload"]["new_event"], note)
     def stamp(ev: dict, src: dict | None) -> dict:
         ev = dict(ev)
         ev.setdefault("id", f"{(ev.get('date') or today).replace('-', '')}-{hashlib.sha1((ev.get('date', '') + ev.get('title', '')).encode()).hexdigest()[:8]}")
@@ -446,12 +539,19 @@ def apply_proposal(p: dict, doc: dict, today: str) -> str:
         return ev
     if p["task"] == "A":
         ev = stamp(p["payload"], p["evidence"])
+        if note:
+            ev["researcher_note"] = note
+            for ch in changed_by_note:
+                ev["updates"].append({"date": today, "field": ch["field"], "old": ch["old"], "new": ch["new"], "evidence": "연구자 의견: " + note, "proposal_id": p["id"]})
         if ev["id"] in by_id:
             return f"{p['id']}: 같은 id 의 사건이 이미 있음 — 건너뜀"
-        events.append(ev); return f"{p['id']}: 사건 추가 {ev['title']}"
+        events.append(ev)
+        return f"{p['id']}: 사건 추가 {ev['title']}" + (f" (의견 반영 {len(changed_by_note)}개 필드)" if changed_by_note else "")
     target = by_id.get(p["target_id"])
     if not target:
         return f"{p['id']}: 대상 사건 {p['target_id']} 없음"
+    if note:
+        target["researcher_note"] = ((target.get("researcher_note") or "") + f" [{today}] " + note).strip()
     if p["task"] == "B":
         pl, done = p["payload"], []
         if pl.get("new_event"):
@@ -490,21 +590,34 @@ def cmd_apply(today: str) -> int:
         save_state(state); print(f"[apply] 중복 제안 {merged}건을 대표 제안에 합침")
     pending = {p["id"]: p for p in state["proposals"] if p["status"] == "proposed"}
     decisions = read_decisions()
+    issue_decisions, issues = read_issue_decisions()
+    decisions.update(issue_decisions)
     lines = []
     for pid, d in decisions.items():
         p = pending.get(pid)
         if not p:
             continue
+        if d["decision"] == "hold":
+            if d["note"]:
+                p["hold_note"] = d["note"]
+            lines.append(f"{pid}: 보류" + (f" ({d['note'][:60]})" if d["note"] else "")); continue
         if d["decision"] == "approved":
-            lines.append(apply_proposal(p, doc, today)); p["status"] = "applied"
+            lines.append(apply_proposal(p, doc, today, note=d["note"])); p["status"] = "applied"
         else:
-            lines.append(f"{pid}: 기각"); p["status"] = "rejected"
-        p["decided"] = d["date"] or today; p["decision_note"] = d["note"]
+            lines.append(f"{pid}: 기각" + (f" ({d['note'][:60]})" if d["note"] else "")); p["status"] = "rejected"
+        p["decided"] = d["date"] or today; p["decision_note"] = d["note"]; p["decision_source"] = d["source"]
     if lines:
         save_events(doc); save_state(state)
         print("[apply] " + "; ".join(lines))
     else:
         print(f"[apply] 반영할 결정 없음 (미결 {len(pending)}건)")
+    sess, repo = _gh()
+    if sess:
+        for issue in issues:
+            mine = [l for l in lines if any(l.startswith(pid) for pid, d in issue_decisions.items() if d["source"] == f"issue#{issue['number']}")]
+            body = f"반영 결과 ({today})\n\n" + ("\n".join(f"- {l}" for l in mine) if mine else "- 해당 제안이 미결 목록에 없어 반영할 것이 없었습니다.")
+            sess.post(issue["comments_url"], json={"body": body}, timeout=30)
+            sess.patch(issue["url"], json={"state": "closed"}, timeout=30)
     return 0
 
 

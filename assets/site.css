@@ -230,3 +230,32 @@ ul.changes .badge b { font-weight: 400; color: var(--ink); }
 .pairs li .n { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
 .pairs li .arrow { text-align: center; color: var(--muted); }
 .empty { padding: 48px 24px; text-align: center; color: var(--muted); border: 1px dashed var(--line); background: var(--surface); }
+
+
+/* ---- 2026-10-22 연구자 지시: 화면의 모든 글자를 20pt 이상으로 ----
+   바닥값을 body * 에 깔고 제목만 더 크게 둔다. 인라인 style 보다 우선하도록 !important. */
+html { font-size: 20pt; }
+body { font-size: 20pt; line-height: 1.5; }
+body * { font-size: 20pt !important; }
+h3, .panel-card h3 { font-size: 24pt !important; }
+h2, .panel-card h2, article h2 { font-size: 28pt !important; }
+h1, .hero h1, article h1 { font-size: 36pt !important; }
+.hero .meta b { font-size: 28pt !important; }
+.stat .value { font-size: 36pt !important; }
+.site-nav .wrap { height: auto; padding: 14px 0; flex-wrap: wrap; gap: 12px 24px; }
+.site-nav .links { flex-wrap: wrap; gap: 14px 24px; }
+.eyebrow, .label, .panel-head, th, .site-nav .links a, .btn { letter-spacing: 1.5px; }
+.hero .meta { gap: 20px 36px; }
+ul.changes li { grid-template-columns: 190px 1fr auto; }
+.panel-body, .panel-head { padding-left: 20px; padding-right: 20px; }
+select, input[type="text"], input[type="search"], textarea { min-height: 48px; }
+input[type="checkbox"], input[type="radio"] { width: 22px; height: 22px; vertical-align: -3px; }
+
+/* ---- 판단 대기: 결정 입력 ---- */
+.decide { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.decide label { text-transform: none; letter-spacing: 0; margin-right: 18px; cursor: pointer; color: var(--ink); }
+.decide textarea { width: 100%; margin-top: 10px; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); padding: 10px 12px; min-height: 80px; }
+.submit-bar { position: sticky; bottom: 0; background: var(--navy); color: #fff; padding: 14px var(--gutter); display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: space-between; z-index: 20; }
+.submit-bar .btn { border-color: #fff; color: #fff; }
+.submit-bar .btn.solid { background: var(--mint); color: var(--ink); border-color: var(--mint); }
+.submit-bar .hint { color: #c9ccd1; }
