@@ -195,6 +195,29 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v4
 
+      # ---- 정리: 이 실행의 아티팩트만 남기고 지우고, 30일 지난 실행 기록을 지운다(Actions 탭에 쌓이지 않게). 개별 실패는 경고만.
+      - name: 아티팩트·옛 실행 기록 정리
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            let a = 0, r = 0;
+            const arts = await github.paginate(github.rest.actions.listArtifactsForRepo, {owner, repo, per_page: 100});
+            for (const x of arts) {
+              if (x.expired || x.workflow_run?.id === context.runId) continue;
+              try { await github.rest.actions.deleteArtifact({owner, repo, artifact_id: x.id}); a++; }
+              catch (e) { core.warning(`아티팩트 ${x.id} 삭제 실패: ${e.message}`); }
+            }
+            const cutoff = Date.now() - 30 * 86400e3;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {owner, repo, per_page: 100});
+            for (const x of runs) {
+              if (x.id === context.runId || x.status !== 'completed' || new Date(x.created_at).getTime() >= cutoff) continue;
+              try { await github.rest.actions.deleteWorkflowRun({owner, repo, run_id: x.id}); r++; }
+              catch (e) { core.warning(`실행 기록 ${x.id} 삭제 실패: ${e.message}`); }
+            }
+            core.info(`아티팩트 ${a}개, 실행 기록 ${r}개 삭제`);
+
       # ---- 메일 알림: 예약 실행이 끝났을 때, 어떤 실행이든 실패했을 때, 수동 실행에서 mail 을 켰을 때, 커밋 메시지에 [mail] 이 있을 때.
       #      MAIL_USER(Gmail 주소)·MAIL_PASS(앱 비밀번호) 가 없으면 건너뛴다.
       - name: 메일 내용 작성
@@ -230,19 +253,3 @@ jobs:
           subject: ${{ steps.mail.outputs.subject }}
           html_body: file://mail.md
           convert_markdown: true
-
-      # ---- 정리: 이 실행의 아티팩트만 남기고 지우고, 30일 지난 실행 기록을 지운다(Actions 탭에 쌓이지 않게).
-      - name: 아티팩트·옛 실행 기록 정리
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const {owner, repo} = context.repo;
-            const arts = await github.paginate(github.rest.actions.listArtifactsForRepo, {owner, repo, per_page: 100});
-            let a = 0;
-            for (const x of arts) if (x.workflow_run?.id !== context.runId) { await github.rest.actions.deleteArtifact({owner, repo, artifact_id: x.id}); a++; }
-            const cutoff = Date.now() - 30 * 86400e3;
-            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {owner, repo, per_page: 100});
-            let r = 0;
-            for (const x of runs) if (x.id !== context.runId && new Date(x.created_at).getTime() < cutoff && x.status === 'completed') { await github.rest.actions.deleteWorkflowRun({owner, repo, run_id: x.id}); r++; }
-            core.info(`아티팩트 ${a}개, 실행 기록 ${r}개 삭제`);
