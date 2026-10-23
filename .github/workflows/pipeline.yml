@@ -189,15 +189,30 @@ jobs:
           gh release download state -R "$GITHUB_REPOSITORY" -D _state -p ai_coop_events.json -p ai_coop_state.json
           for f in ai_coop_events.json ai_coop_state.json; do [ -f "_state/$f" ] && cp "_state/$f" "data/$f"; done
           ls -la data
-      - name: 결정 반영 + 일일 판단 요청
+      # apply 는 반영한 Issue 를 닫는다. 그 결과를 daily 전에 올려 둔다 — 전에는 daily 가 실패하면 업로드가 건너뛰어져
+      # Issue 만 닫히고 연구자 결정이 사라졌다(2026-10-23).
+      - name: 결정 반영
+        id: apply
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then echo "ANTHROPIC_API_KEY 없음 — 건너뜀"; exit 0; fi
+          echo "ran=true" >> "$GITHUB_OUTPUT"
           python ai_coop_tasks.py apply
-          python ai_coop_tasks.py daily
+      - name: 보관함에 결정 반영 결과 올리기
+        if: always() && steps.apply.outputs.ran == 'true'   # apply 가 Issue 를 닫다가 실패해도 이미 저장한 반영분은 올린다
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload state data/ai_coop_events.json data/ai_coop_state.json -R "$GITHUB_REPOSITORY" --clobber
+      - name: 일일 판단 요청
+        if: steps.apply.outputs.ran == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: python ai_coop_tasks.py daily
       - name: 보관함에 사건·제안 파일 올리기
+        if: steps.apply.outputs.ran == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload state data/ai_coop_events.json data/ai_coop_state.json -R "$GITHUB_REPOSITORY" --clobber
@@ -221,13 +236,14 @@ jobs:
           cache-dependency-path: requirements-site.txt
       - name: 의존성 설치
         run: pip install -r requirements-site.txt
-      - name: 보관함에서 전부 내려받기
+      - name: 보관함에서 사이트 자료 내려받기
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p cache logs data _state
-          gh release download state -R "$GITHUB_REPOSITORY" -D _state
-          for f in master.parquet prediction_cache.json state.json; do [ -f "_state/$f" ] && mv "_state/$f" cache/; done
+          # 사이트가 읽는 것만 받는다. prediction_cache.json(BERT 캐시, 31MB)은 패널 1 갱신에만 쓴다.
+          gh release download state -R "$GITHUB_REPOSITORY" -D _state -p master.parquet -p state.json -p logs.tar.gz -p reference.tar.gz -p ai_coop_events.json -p ai_coop_state.json
+          for f in master.parquet state.json; do [ -f "_state/$f" ] && mv "_state/$f" cache/; done
           [ -f _state/logs.tar.gz ] && tar -xzf _state/logs.tar.gz -C logs
           if [ -f _state/reference.tar.gz ]; then mkdir -p data/reference && tar -xzf _state/reference.tar.gz -C data/reference; fi
           for f in ai_coop_events.json ai_coop_state.json; do [ -f "_state/$f" ] && cp "_state/$f" "data/$f"; done

@@ -373,7 +373,7 @@ def fetch_pages(api_key: str, request_data: dict, label: str) -> list[dict]:
 def fetch_incremental(api_key: str, since: str, end_date: str) -> list[dict]:
     """last_updated가 since 이후(포함)인 건만 받는다.
 
-    since는 마지막 점검일을 그대로 쓴다. 경계일 하루를 다시 받는 비용은 거의
+    since는 마지막 점검일의 하루 전부터 받는다. 경계일을 다시 받는 비용은 거의
     없고, 하루 어긋나 누락되는 위험을 없앨 수 있다.
 
     submission_period(등재일 기준)는 쓰지 않는다. 2026-08-10 스냅숏 실측으로
@@ -387,6 +387,9 @@ def fetch_incremental(api_key: str, since: str, end_date: str) -> list[dict]:
     # 끝날은 하루 뒤까지 넣는다. 2026-10-23 예약 실행이 UTC 날짜 기준 [10-22, 10-22] 하루 창으로 0건을 받았는데,
     # GTA 쪽에는 10-22 갱신분이 있었다. 범위 끝이 배타적일 가능성에 대비한 안전장치이며, 미래 날짜라 더 받을 것은 없다.
     until = (date.fromisoformat(end_date) + timedelta(days=1)).isoformat()
+    # 시작날도 하루 앞당긴다(2026-10-23). 워크플로가 TZ=Asia/Seoul 이라 data_end_date 가 한국 날짜다. 06시 KST(UTC 전날 21시)
+    # 실행 뒤 그 UTC 날짜에 갱신된 건은 다음 실행의 since(한국 날짜)보다 하루 앞이라 빠졌다. 겹친 하루는 diff 가 걸러 낸다.
+    since = (date.fromisoformat(since) - timedelta(days=1)).isoformat()
     say(f"    조회 창 last_updated {since} ~ {until}")
     rows = fetch_pages(api_key, {"update_period": [since, until]}, "변경된 건")
     merged = {int(row["intervention_id"]): row for row in rows}
