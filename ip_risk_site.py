@@ -1,16 +1,27 @@
-"""연도별 BSV 거리 × 미·중 산업정책 피노출도 사이트 데이터 생성."""
+"""패널 1 — Distortive Industrial Policy Tracker.
+
+cache/master.parquet(GTA + BERT 라벨)에서 미·중 산업정책 조치를 뽑고, BSV ideal point·IMF DOTS·WDI 와 엮어
+site/ip_risk.json(국가·연도 행, 블록 구성)과 site/ip_sectors.json(조치 단위 — 산점도는 브라우저에서 다시 집계)을 쓴다.
+화면 본문은 ip_risk_template.html(패널 전용 CSS·본문·스크립트), 페이지 틀은 publish_site.page() 가 씌운다.
+
+2026-10-23 industrial_policy_site.py 를 합쳤다. 그 모듈은 조치 목록을 site/ip_us_cn.json(5.8MB, 공개 폴더)으로
+써서 여기 넘겼는데, 같이 계산하던 lift·Mann-Whitney·정책수단 검정(옛 ip_us_cn 화면, 2026-08-19 삭제)은 아무도 읽지 않았다.
+"""
 
 from __future__ import annotations
 
 import csv
 import json
-import shutil
+import math
 from collections import Counter, defaultdict
-import datetime as _dt
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+MASTER = HERE / "cache" / "master.parquet"
+# 화면 자료의 시작일. 수집(auto_update.py START_DATE)은 2008-01-01부터지만 화면은 2010-01-01부터(2026-08-18 결정).
+SITE_START_DATE = "2010-01-01"
+HS_XLSX = HERE / "reference" / "HSCodeandDescription.xlsx"   # HS 2자리(류) 명칭 — ip_sectors.json 의 hs2_labels
 # 기준자료 3종은 collect_reference.py 가 API 로 받아 data/reference/ 에 둔다(2026-10-22, git 제외).
 # CI 는 Release "state" 의 reference.tar.gz 에서 내려받는다. 출처는 collect_reference.py 머리말.
 REF = HERE / "data" / "reference"
@@ -49,6 +60,84 @@ DOTS_REPORTER = {"United States of America": "USA", "China": "CHN"}
 # 전체에 자동 반영된다(Red/Amber 필터와 같은 방식).
 TARGETED_ONLY = False
 
+# #DUP_RULE_20260824 — 같은 프로그램의 반복 공고를 1건으로 합친다.
+# 아래 6개 필드가 **전부 값이 있으면서 전부 같은** intervention 은 GTA 가 행정 공고 단위로 쪼개 올린 같은 조치로 본다.
+# 하나만 남기고 나머지에 dup=True 를 찍는다. 하나라도 비어 있으면 합치지 않는다("결측끼리 같다"를 같은 조치로 오인하지 않게).
+# 최대 그룹은 2022년 USDA 생산보조 302건, 다음이 재무부 1603 재생에너지 그랜트 171·124·95건.
+DUP_KEYS = [
+    "implementing_jurisdictions", "affected_jurisdictions", "intervention_type",
+    "eligible_firm", "affected_sectors", "gta_evaluation",
+]
+MASTER_COLUMNS = sorted(set(DUP_KEYS) | {
+    "intervention_id", "date_announced", "date_implemented", "date_removed", "D_IP_bert_3",
+    "inferred_jurisdictions", "affected_products"})   # 설명문 등 큰 열은 읽지 않는다
+
+
+def _text(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if math.isnan(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
+def _split(value, sep: str) -> list[str]:
+    return [part.strip() for part in _text(value).split(sep) if part.strip()]
+
+
+def _hs2_of(affected_products) -> list[str]:
+    """affected_products(HS6, 5~6자리 콤마열) → 2자리(류) 코드. 5자리는 앞자리 0이 빠진 것이라 zero-pad 후 자른다."""
+    return sorted({part.zfill(6)[:2] for part in _split(affected_products, ",")})
+
+
+def _dup_ids(ip) -> set[int]:
+    """DUP_KEYS 6필드가 전부 유효하고 전부 같은 그룹에서 첫 건 외 나머지 intervention_id."""
+    valid = ip[~ip[DUP_KEYS].map(lambda v: _text(v).strip() == "").any(axis=1)]
+    ordered = valid.sort_values("intervention_id")
+    dropped = ordered[ordered.duplicated(subset=DUP_KEYS, keep="first")]
+    return {int(v) for v in dropped["intervention_id"]}
+
+
+def load_measures() -> dict:
+    """master.parquet → 미·중 산업정책(D_IP_bert_3 == 1, 2010+) 조치 목록과 HS 2자리 집계.
+
+    한 조치의 시행국에 미·중이 둘 다 있으면 양쪽에 한 번씩 들어간다. 평가(Red/Amber/Green) 절단은 build() 에서 한다."""
+    import pandas as pd
+
+    df = pd.read_parquet(MASTER, columns=MASTER_COLUMNS)
+    df = df[df["date_announced"].fillna("") >= SITE_START_DATE]
+    ip = df[df["D_IP_bert_3"] == 1]
+    dup_ids = _dup_ids(ip)
+    measures, hs2_counts = [], Counter()
+    for implementer in IMPLEMENTERS:
+        rows = ip[ip["implementing_jurisdictions"].fillna("").apply(
+            lambda s, imp=implementer: imp in [p.strip() for p in s.split(";")])]
+        for row in rows.to_dict("records"):
+            rid, hs2 = int(row["intervention_id"]), _hs2_of(row.get("affected_products"))
+            hs2_counts.update(hs2)
+            measures.append({
+                "id": rid, "implementing": implementer,
+                "date": _text(row.get("date_announced"))[:10],
+                "date_implemented": _text(row.get("date_implemented"))[:10] or None,
+                "date_removed": _text(row.get("date_removed"))[:10] or None,
+                # GTA 의 AJ 등록 방식(Targeted/Inferred/Excluded/Incidental). API 의 affected_jurisdictions_type 을
+                # auto_update.py 가 옛 열 이름 inferred_jurisdictions 로 받아 둔다.
+                "aj_type": _text(row.get("inferred_jurisdictions")) or None,
+                "evaluation": _text(row.get("gta_evaluation")),
+                "affected": _split(row.get("affected_jurisdictions"), ";"),
+                "dup": rid in dup_ids,
+                "hs2": hs2,
+            })
+    labels = {}
+    if HS_XLSX.is_file():
+        hs = pd.read_excel(HS_XLSX)
+        labels = {str(r.Code).zfill(2): str(r.Description) for r in hs[hs["Level"] == 2].itertuples()}
+    return {"measures": measures, "hs2_labels": {k: labels[k] for k in hs2_counts if k in labels},
+            "hs2_counts": hs2_counts.most_common()}
+
 
 def _load_gdp() -> dict:
     """(iso3, year) -> GDP(경상 USD). World Bank WDI, 2010~2025."""
@@ -76,13 +165,11 @@ def _load_trade() -> dict:
     return share
 
 
-def build(out: Path) -> bool:
-    source = out / "ip_us_cn.json"
-    if not source.is_file() or not BSV.is_file() or not TEMPLATE.is_file():
-        return False
-    if not DOTS.is_file():
-        return False
-    payload = json.loads(source.read_text(encoding="utf-8"))
+def build(out: Path, asof: str) -> list[dict]:
+    """ip_risk.json·ip_sectors.json 을 쓰고 ip_risk.html 의 페이지 사양을 돌려준다. 입력이 없으면 []. asof = GTA 자료 기준일."""
+    if not all(p.is_file() for p in (MASTER, BSV, DOTS, GDP, TEMPLATE)):
+        return []
+    payload = load_measures()
     # ---- GTA Red+Amber(차별적·잠재적 차별적)만 사용 (2026-08-25) ------------
     # NIPO 전략동기 태그(national security/resilience/... — Fed IFDP 1408이
     # 쓰는 것)가 우리 원자료엔 없다. 대신 GTA 자체 3단계 평가(Red/Amber/
@@ -113,7 +200,7 @@ def build(out: Path) -> bool:
         except (TypeError, ValueError): continue
         if not 2010 <= year <= 2026: continue
         imp = m["implementing"]; denominators[(imp, year)] += 1
-        for gta in set(m.get("affected", [])):
+        for gta in dict.fromkeys(m.get("affected", [])):   # 중복만 빼고 GTA 순서 유지(set 은 빌드마다 순서가 바뀐다)
             country = ALIASES.get(gta, gta)
             if (min(year, 2025), country) in positions:
                 exposed[(imp, year, country)] += 1
@@ -165,15 +252,6 @@ def build(out: Path) -> bool:
     # 맞췄다. 2010~2025 평균으로 블록을 고정하던 그 이전 구현(연도별 구성
     # 변화를 지워버려 폐기)으로 되돌아간 것도 아니다 — 평균이 아니라 Fed
     # baseline과 같은 단일 연도 스냅샷이다.
-    def _pole_dist(pole: str) -> dict:
-        out = {}
-        for country in {c for y in FIXED_YEARS for c in countries_by_year[y]}:
-            ds = [abs(positions[(y, pole)][1] - positions[(y, country)][1])
-                  for y in FIXED_YEARS if (y, country) in positions]
-            if ds:
-                out[country] = sum(ds) / len(ds)
-        return out
-
     def _blocs(d_us: dict, d_cn: dict) -> dict:
         seg = {c: (d_cn[c] - d_us[c]) / (d_us[c] + d_cn[c])
                for c in d_us.keys() & d_cn.keys() if d_us[c] + d_cn[c]}
@@ -181,8 +259,6 @@ def build(out: Path) -> bool:
         q = len(ranked) // 4
         return {c: ("CN" if i < q else "US" if i >= len(ranked) - q else "NA")
                 for i, c in enumerate(ranked)}
-
-    ipd_us, ipd_cn = _pole_dist("United States"), _pole_dist("China")
 
     def _year_dists(y: int) -> tuple[dict, dict]:
         cs = [c for c in countries_by_year[y] if (y, c) in positions]
@@ -261,7 +337,7 @@ def build(out: Path) -> bool:
                              "gdp_usd": round(gdp_usd, 2) if gdp_usd is not None else None,
                              "bsv_year_used": bsv_year, "risk_index": round(share * distance, 8),
                              "distance_carried_forward": year > 2025, "partial_policy_year": year == 2026})
-    result = {"built_at": date.today().isoformat(), "gta_asof": payload.get("gta_asof"),
+    result = {"built_at": date.today().isoformat(), "gta_asof": asof,
               "definition": "exposure_share × BSV AbsIdealDiff fixed at 2021",
               "distance_note": ("bsv_distance = |시행국 ideal point − 피영향국 ideal point|, BSV 2021 한 해로 고정 "
                                 "(2026-10-22부터, 연구자 결정. 이전엔 조치 연도의 거리를 썼다 — bsv_distance_annual 에 남김). "
@@ -326,28 +402,33 @@ def build(out: Path) -> bool:
         removed = m.get("date_removed")
         return not (removed and removed <= cutoff)
 
-    def _build_composition_asof() -> list:
+    def _announced_in(m: dict, year: int) -> bool:
+        try:
+            return int(m["date"][:4]) == year
+        except (TypeError, ValueError):
+            return False
+
+    def _composition(selects) -> list:
+        """selects(m, year) — 그해 집계에 넣을 조치인가. 누적(그해 말 생존)과 연도별(그해 발표)이 이것만 다르다."""
         out_rows = []
         for imp in IMPLEMENTERS:
-            imp_measures = [m for m in payload["measures"] if m["implementing"] == imp]
+            imp_measures = [m for m in payload["measures"]
+                            if m["implementing"] == imp and m.get("dup") is not True]   # #DUP_RULE_20260824
+            own_key, other_key = ("US", "CN") if imp == "United States of America" else ("CN", "US")
             for year in range(2010, 2027):
-                cutoff = f"{min(year, 2026)}-12-31"
                 counts = Counter(); excluded_count = 0; all_count = 0
-                by_name = fixed_blocs
                 for m in imp_measures:
-                    if m.get("dup") is True: continue  # #DUP_RULE_20260824 — 반복 공고 중복 제거
-                    if not _alive_on(m, cutoff): continue
+                    if not selects(m, year):
+                        continue
                     for gta in m.get("affected", []):
                         all_count += 1
-                        country = ALIASES.get(gta, gta)
-                        bloc_name = by_name.get(country)
+                        bloc_name = fixed_blocs.get(ALIASES.get(gta, gta))
                         if bloc_name is None:
                             excluded_count += 1
                         else:
                             counts[bloc_name] += 1
                 classified = sum(counts.values())
-                own = counts["US" if imp == "United States of America" else "CN"]
-                other = counts["CN" if imp == "United States of America" else "US"]
+                own, other = counts[own_key], counts[other_key]
                 out_rows.append({
                     "implementer": imp, "year": year, "classified_count": classified,
                     "all_aj_count": all_count, "excluded_count": excluded_count,
@@ -360,42 +441,8 @@ def build(out: Path) -> bool:
                 })
         return out_rows
 
-    def _build_composition_annual() -> list:
-        out_rows = []
-        for imp in IMPLEMENTERS:
-            for year in range(2010, 2027):
-                counts = Counter(); excluded_count = 0; all_count = 0
-                by_name = fixed_blocs
-                for m in payload["measures"]:
-                    try: myear = int(m["date"][:4])
-                    except (TypeError, ValueError): continue
-                    if m["implementing"] != imp or myear != year: continue
-                    if m.get("dup") is True: continue  # #DUP_RULE_20260824 — 반복 공고 중복 제거
-                    for gta in m.get("affected", []):
-                        all_count += 1
-                        country = ALIASES.get(gta, gta)
-                        bloc_name = by_name.get(country)
-                        if bloc_name is None:
-                            excluded_count += 1
-                        else:
-                            counts[bloc_name] += 1
-                classified = sum(counts.values())
-                own = counts["US" if imp == "United States of America" else "CN"]
-                other = counts["CN" if imp == "United States of America" else "US"]
-                out_rows.append({
-                    "implementer": imp, "year": year, "classified_count": classified,
-                    "all_aj_count": all_count, "excluded_count": excluded_count,
-                    "excluded_share": round(excluded_count / all_count, 8) if all_count else 0,
-                    "own_bloc_count": own, "nonaligned_count": counts["NA"],
-                    "opposing_bloc_count": other,
-                    "own_bloc_share": round(own / classified, 8) if classified else 0,
-                    "nonaligned_share": round(counts["NA"] / classified, 8) if classified else 0,
-                    "opposing_bloc_share": round(other / classified, 8) if classified else 0,
-                })
-        return out_rows
-
-    result["composition"] = _build_composition_asof()
-    result["composition_annual"] = _build_composition_annual()
+    result["composition"] = _composition(lambda m, year: _alive_on(m, f"{min(year, 2026)}-12-31"))
+    result["composition_annual"] = _composition(_announced_in)
     (out / "ip_risk.json").write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
     # ---- 산업(HS4) 필터용 조치 단위 원자료 (2026-08-24) --------------------
@@ -413,7 +460,7 @@ def build(out: Path) -> bool:
         excluded = m.get("dup") is True  # #DUP_RULE_20260824만 쓴다. 부처 하드코딩
         # 예외(구 USDA 특례)는 2026-08-25 제거했다.
         aj = []
-        for gta in set(m.get("affected", [])):
+        for gta in dict.fromkeys(m.get("affected", [])):   # 중복만 빼고 GTA 순서 유지(set 은 빌드마다 순서가 바뀐다)
             country = ALIASES.get(gta, gta)
             if country == imp_bsv or country not in name_to_iso3:
                 continue
@@ -434,8 +481,11 @@ def build(out: Path) -> bool:
     (out / "ip_sectors.json").write_text(
         json.dumps(sectors_out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
-    # 배포본이 실제로 갱신됐는지 눈으로 확인할 수 있게 빌드 시각을 심는다(캐시 진단용).
-    html = TEMPLATE.read_text(encoding="utf-8").replace(
-        "</body>", f'<p class="reg-note">빌드: {_dt.datetime.now().strftime("%Y-%m-%d %H:%M")}</p></body>')
-    (out / "ip_risk.html").write_text(html, encoding="utf-8")
-    return True
+    # 템플릿 = 패널 전용 <style> + 본문·스크립트. JSON 주소에 빌드 시각을 붙여, 배포마다 새로 받고 그 사이엔 브라우저 캐시를 쓴다
+    # (전에는 고정된 ?v=20260824 에 cache:'no-store' 라 방문마다 5MB 를 다시 받았다).
+    style, body = TEMPLATE.read_text(encoding="utf-8").split("</style>", 1)
+    body = body.replace("__BUILD__", datetime.now().strftime("%Y%m%d%H%M"))
+    return [{"file": "ip_risk.html", "title": "Distortive Industrial Policy Tracker · SKL",
+             "hero": '<span class="eyebrow">Panel 1 · GTA × BSV</span><h1>Distortive Industrial Policy Tracker</h1>',
+             "head": '\n<meta name="robots" content="noindex,nofollow">\n' + style + "</style>",
+             "body": body.strip(), "current": "ip_risk.html", "asof": asof}]

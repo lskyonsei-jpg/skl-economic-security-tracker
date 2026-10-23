@@ -1,10 +1,6 @@
-<!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>Distortive Industrial Policy Tracker · SKL</title>
-<link rel="stylesheet" href="site.css"><style>
-/* 패널 1 전용 — 토큰(site.css)만 참조한다. 색 리터럴 없음. */
+<style>
+/* 패널 1 전용 — 토큰(site.css)만 참조한다. 이 조각은 ip_risk_site.py 가 읽고 publish_site.page() 가 틀을 씌운다. */
 main.wrap{padding-top:40px;padding-bottom:40px}
-svg .grid{display:inline}
 .year-slider{display:grid;grid-template-columns:auto minmax(120px,1fr) 84px;align-items:center;gap:14px;min-width:0}
 .year-slider output{text-align:right;color:var(--ink);letter-spacing:0;white-space:nowrap}
 .panel{overflow:hidden}
@@ -14,16 +10,13 @@ svg .grid{display:inline}
 .rank-control{padding:14px 18px;background:var(--surface-2);border-top:1px solid var(--line)}   /* 그림 아래 (연구자 지시 2026-10-23) */
 .rank-control label{display:block}
 .rank-control select{width:100%;margin-top:6px}
-.rank-control .year-slider{display:grid}
 .axis{stroke:var(--line-strong);stroke-width:1}
-.grid{stroke:var(--line);stroke-width:.7}
-.risk-dot{fill:var(--mint-deep)}
+.gridline{stroke:var(--line);stroke-width:1}
 .scatter text{font-size:21px;fill:var(--ink)}
 .scatter text.sub{fill:var(--ink-2)}
 .scatter text.title{font-weight:400}
 .scatter text.iso{font-weight:700;letter-spacing:.02em;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round}
 .scatter circle.dot{cursor:pointer}
-.scatter .grid{stroke-width:1}
 .scatter .axis{stroke-width:1.4}
 .regtable{margin:12px 0 14px;width:100%;border-collapse:collapse}
 .regtable th,.regtable td{padding:8px 12px;border-bottom:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums}
@@ -31,7 +24,6 @@ svg .grid{display:inline}
 .regtable thead th{border-bottom:1px solid var(--line-strong)}
 .regtable td.sig3{color:var(--seq-5);font-weight:700}.regtable td.sig2{color:var(--seq-4)}.regtable td.sig1{color:var(--mint-deep)}.regtable td.signone{color:var(--muted)}
 .reg-note{color:var(--muted);margin:8px 0 0}
-p.note#method{margin:24px 0 0;padding:16px 20px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2)}
 .empty{padding:24px;text-align:center;color:var(--muted)}
 .composition-wrap{padding:12px 14px}
 .composition-wrap svg{display:block;width:100%;height:auto}
@@ -43,25 +35,21 @@ p.note#method{margin:24px 0 0;padding:16px 20px;background:var(--surface);border
 .comp-legend i{display:inline-block;width:18px;height:18px;margin-right:8px;vertical-align:-2px}
 .scatter-targeted-label{display:flex;align-items:center;gap:10px;cursor:pointer;text-transform:none;letter-spacing:0;color:var(--ink-2)}
 #composition-panel{margin-top:24px}
-</style></head><body>
-<nav class="site-nav"><div class="wrap"><a class="brand" href="index.html"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>SKL Economic Security Tracker</a><div class="links"><a href="ip_risk.html" aria-current="page">Industrial Policy</a><a href="ai_coop.html">AI Cooperation</a><a href="review.html">Review</a><a href="data.html">Data</a><a href="codebook.html">Codebook</a></div></div></nav>
-<section class="hero"><div class="wrap"><span class="eyebrow">Panel 1 · GTA × BSV</span><h1>Distortive Industrial Policy Tracker</h1></div></section>
-<div class="wrap last-update">Last update <span id="meta-asof">—</span></div>
+</style>
 <main class="wrap">
 
-<section class="panel scatter"><div class="panel-head"><h2 class="panel-title"><span class="fig">그림 1</span>피영향 건수 × 지정학적 위치 — 미국 vs 중국</h2><a href="codebook.html#scatter">코드북</a></div><div class="scatter-wrap" style="position:relative"><svg id="scatter" viewBox="0 0 1000 500" aria-label="피영향 건수와 지정학적 위치"></svg><div id="scatter-tip" class="tooltip"></div></div><table class="regtable" id="regtable"></table><div class="rank-control" style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><label class="year-slider">시작연도<input id="scatter-from" type="range" min="2010" max="2026" value="2010" step="1"><output id="scatter-from-label">2010</output></label><label class="year-slider">끝연도<input id="scatter-to" type="range" min="2010" max="2026" value="2026" step="1"><output id="scatter-to-label">2026</output></label><label class="year-slider" style="grid-column:1/-1">무역비중 상위 N개국만<input id="scatter-topn" type="range" min="3" max="200" value="200" step="1"><output id="scatter-topn-label">전체</output></label><label style="grid-column:1/-1">가로축 지표<select id="scatter-xvar"><option value="bsv_ideal_point">BSV ideal point (Bailey et al. 2017)</option><option value="fed_bloc">Fed 블록 3분류 — 중국 / 비동맹 / 미국 (FEDS Notes 2025)</option></select></label><label style="grid-column:1/-1">원 크기 지표<select id="scatter-sizevar"><option value="trade_share">무역비중 — 시행국 상품무역 대비 (IMF DOTS)</option><option value="gdp_usd">GDP (World Bank WDI)</option></select></label><label class="scatter-targeted-label" style="grid-column:1/-1"><input id="scatter-targeted" type="checkbox"><span>Targeted만 보기 (GTA가 직접 지목한 국가만 · 미국 25건, 중국 13건)</span></label></div></section>
+<section class="panel scatter"><div class="panel-head"><h2 class="panel-title"><span class="fig">그림 1</span>피영향 건수 × 지정학적 위치 — 미국 vs 중국</h2><a href="codebook.html#scatter">코드북</a></div><div class="scatter-wrap" style="position:relative"><svg id="scatter" viewBox="0 0 1000 500" aria-label="피영향 건수와 지정학적 위치"></svg><div id="scatter-tip" class="tooltip"></div></div><table class="regtable" id="regtable"></table><div class="rank-control" style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><label class="year-slider">시작연도<input id="scatter-from" type="range" min="2010" max="2026" value="2010" step="1"><output id="scatter-from-label">2010</output></label><label class="year-slider">끝연도<input id="scatter-to" type="range" min="2010" max="2026" value="2026" step="1"><output id="scatter-to-label">2026</output></label><label class="year-slider" style="grid-column:1/-1">무역비중 상위 N개국만<input id="scatter-topn" type="range" min="3" max="200" value="200" step="1"><output id="scatter-topn-label">전체</output></label><label style="grid-column:1/-1">가로축 지표<select id="scatter-xvar"><option value="bsv_ideal_point">BSV ideal point (Bailey et al. 2017)</option><option value="fed_bloc">Fed 블록 3분류 — 중국 / 비동맹 / 미국 (FEDS Notes 2025)</option></select></label><label style="grid-column:1/-1">원 크기 지표<select id="scatter-sizevar"><option value="trade_share">무역비중 — 시행국 상품무역 대비 (IMF DOTS)</option><option value="gdp_usd">GDP (World Bank WDI)</option></select></label><label class="scatter-targeted-label" style="grid-column:1/-1"><input id="scatter-targeted" type="checkbox"><span>Targeted만 보기 (GTA가 직접 지목한 국가만<span id="targeted-n"></span>)</span></label></div></section>
 
 <section class="panel scatter" id="composition-panel"><div class="panel-head"><h2 class="panel-title"><span class="fig">그림 2</span>피영향국 블록 구성 — 미국 vs 중국</h2><a href="codebook.html#composition">코드북</a></div><div class="composition-wrap"><svg id="composition" viewBox="0 0 1000 760" aria-label="미국과 중국의 현재 유효 산업정책 피영향국 블록별 등장 건수"></svg></div><div class="comp-legend"><span><i style="background:var(--bloc-self)"></i>자국 블록</span><span><i style="background:var(--bloc-neutral)"></i>비동맹</span><span><i style="background:var(--bloc-other)"></i>상대 블록</span></div><div id="composition-note" class="reg-note" style="padding:0 20px 16px"></div><div class="rank-control"><label>보기 방식<select id="comp-mode"><option value="cumulative">누적 — 그해 12/31에 유효한 조치</option><option value="annual">연도별 — 그해 발표된 조치</option></select></label></div></section>
 </main>
-<footer class="site-footer"><div class="wrap"><span>SKL Economic Security Tracker · 연구용 자료</span><span>자료 기준일 <span id="foot-asof">—</span> · <span class="build" id="foot-build">빌드 —</span></span></div></footer>
 <script>
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let D,G,TH={},XMIN=-2,XMAX=3,MAXSIZE=.2;
+let D,XMIN=-2,XMAX=3,MAXSIZE=.2;
 const RMIN=3,RMAX=26;
 function rOf(v){return v==null?6:RMIN+Math.sqrt(Math.min(v,MAXSIZE)/MAXSIZE)*(RMAX-RMIN)}
 function fmtSize(v,metric){if(v==null)return'자료없음';metric=metric||state.sizevar;return metric==='gdp_usd'?`$${(v/1e9).toLocaleString(undefined,{maximumFractionDigits:0})}B`:`${(v*100).toFixed(2)}%`}
 const tok=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const state={imp:'United States of America',year:2024,yearFrom:2010,yearTo:2026,topN:200,xvar:'bsv_ideal_point',sizevar:'trade_share',compMode:'cumulative',targetedOnly:false,hs2:new Set()};
+const state={yearFrom:2010,yearTo:2026,topN:200,xvar:'bsv_ideal_point',sizevar:'trade_share',compMode:'cumulative',targetedOnly:false};
 let SEC=null;
 function computeScatterDomain(xk,sk){xk=xk||state.xvar;sk=sk||state.sizevar;if(xk!=='fed_bloc'){const ip=D.rows.filter(r=>r[xk]!=null).map(r=>r[xk]);XMIN=Math.min(...ip);XMAX=Math.max(...ip)}const sv=D.rows.filter(r=>r[sk]!=null).map(r=>r[sk]);MAXSIZE=sv.length?Math.max(...sv):.2}
 function linreg(pts){const n=pts.length;if(n<2)return null;const mx=pts.reduce((s,p)=>s+p.x,0)/n,my=pts.reduce((s,p)=>s+p.y,0)/n;let sxy=0,sxx=0,syy=0;for(const p of pts){sxy+=(p.x-mx)*(p.y-my);sxx+=(p.x-mx)**2;syy+=(p.y-my)**2}if(sxx===0)return null;const b=sxy/sxx,a=my-b*mx,r=syy?sxy/Math.sqrt(sxx*syy):0;return{a,b,r}}
@@ -72,10 +60,9 @@ function linreg(pts){const n=pts.length;if(n<2)return null;const mx=pts.reduce((
 // 아닌 잡음을 x축과 무관하게 y축에 실어 나른다. 분수는 전부 뺀다.
 // 지도·순위·추이의 risk_index는 정의상 비중 × 거리이므로 그대로 둔다.
 // 산점도는 ip_sectors.json(조치 단위 원자료)에서 매번 다시 집계한다(2026-08-24).
-// 기본으로 중복 제거(#DUP_RULE_20260824)만 걸고(부처별 하드코딩 예외는 없앴다),
-// 화면에서 시행 수준(지방정부 제외)과 산업(HS4)을 추가로 걸 수 있다.
+// 기본으로 중복 제거(#DUP_RULE_20260824)만 걸고(부처별 하드코딩 예외는 없앴다), 화면에서 Targeted 만 따로 볼 수 있다.
 const IMP_CODE={'United States of America':0,'China':1};
-function exposedCounts(imp,yFrom,yTo){const code=IMP_CODE[imp],sel=state.hs2,hasSel=sel.size>0;const out={};for(const m of SEC.measures){if(m.m!==code||m.y<yFrom||m.y>yTo||m.x)continue;if(state.targetedOnly&&!m.t)continue;if(hasSel&&!m.h.some(h=>sel.has(h)))continue;for(const iso of m.a)out[iso]=(out[iso]||0)+1}return out}
+function exposedCounts(imp,yFrom,yTo){const code=IMP_CODE[imp];const out={};for(const m of SEC.measures){if(m.m!==code||m.y<yFrom||m.y>yTo||m.x)continue;if(state.targetedOnly&&!m.t)continue;for(const iso of m.a)out[iso]=(out[iso]||0)+1}return out}
 function poolRows(imp,yFrom,yTo,key){const cat=(key==='fed_bloc');const by={};for(const r of D.rows){if(r.implementer!==imp||r.year<yFrom||r.year>yTo)continue;if(r[key]==null)continue;const c=by[r.affected_iso3]||(by[r.affected_iso3]={distSum:0,distN:0,cat:null,country:r.affected_country,tradeSum:0,tradeN:0,gdpSum:0,gdpN:0});if(cat){c.cat=r[key]}else{c.distSum+=r[key];c.distN++}if(r.trade_share!=null){c.tradeSum+=r.trade_share;c.tradeN++}if(r.gdp_usd!=null){c.gdpSum+=r.gdp_usd;c.gdpN++}}const counts=exposedCounts(imp,yFrom,yTo);const out=[];for(const iso3 in counts){const exp=counts[iso3];const c=by[iso3];if(!exp||!c||(cat?c.cat==null:!c.distN))continue;out.push({affected_country:c.country,affected_iso3:iso3,exposed_count:exp,[key]:cat?c.cat:c.distSum/c.distN,trade_share:c.tradeN?c.tradeSum/c.tradeN:null,gdp_usd:c.gdpN?c.gdpSum/c.gdpN:null})}return out}
 function fitOf(rows,key,yfield){yfield=yfield||'exposed_count';return rows.length>=5?linreg(rows.map(r=>({x:r[key],y:r[yfield]}))):null}
 function corr(xs,ys){const n=xs.length;if(n<3)return null;const mx=xs.reduce((a,b)=>a+b,0)/n,my=ys.reduce((a,b)=>a+b,0)/n;let sxy=0,sxx=0,syy=0;for(let i=0;i<n;i++){sxy+=(xs[i]-mx)*(ys[i]-my);sxx+=(xs[i]-mx)**2;syy+=(ys[i]-my)**2}return(sxx&&syy)?sxy/Math.sqrt(sxx*syy):null}
@@ -128,8 +115,8 @@ function scatterPanel(svgId,key){const svg=$('#'+svgId),gap=34,subW=(1000-36-gap
  const step=pickCountStep(mx),nT=Math.max(1,Math.ceil(mx/step)),yMax=step*nT;
  const x=v=>pl+(v-XMIN)/(XMAX-XMIN)*plotW,y=v=>plotB-v/yMax*plotH;
  let grid='';
- for(let k=0;k<=nT;k++){const yv=step*k,py=y(yv);grid+=`<line class="grid" x1="${pl}" x2="${pr}" y1="${py}" y2="${py}"/><text x="${pl-10}" y="${py+8}" text-anchor="end">${yv.toLocaleString()}</text>`}
- for(let k=0;k<=4;k++){const xv=XMIN+(XMAX-XMIN)*k/4,px=x(xv);grid+=`<text x="${px}" y="${plotB+30}" text-anchor="middle">${xv.toFixed(1)}</text>`}grid+=`<line class="grid" x1="${x(0)}" x2="${x(0)}" y1="${oy}" y2="${plotB}" stroke-dasharray="3,3"/>`;
+ for(let k=0;k<=nT;k++){const yv=step*k,py=y(yv);grid+=`<line class="gridline" x1="${pl}" x2="${pr}" y1="${py}" y2="${py}"/><text x="${pl-10}" y="${py+8}" text-anchor="end">${yv.toLocaleString()}</text>`}
+ for(let k=0;k<=4;k++){const xv=XMIN+(XMAX-XMIN)*k/4,px=x(xv);grid+=`<text x="${px}" y="${plotB+30}" text-anchor="middle">${xv.toFixed(1)}</text>`}grid+=`<line class="gridline" x1="${x(0)}" x2="${x(0)}" y1="${oy}" y2="${plotB}" stroke-dasharray="3,3"/>`;
  out+=`<text class="title" x="${ox+subW/2}" y="26" text-anchor="middle">${label} 시행 · ${state.yearFrom}~${state.yearTo}</text>`;
  out+=`<text class="sub" x="${ox+subW/2}" y="56" text-anchor="middle">n=${rows.length}${fit?` · r=${fit.r.toFixed(2)}`:' · n&lt;5'}</text>`;
  out+=grid;
@@ -178,8 +165,8 @@ function blocPanel(svgId){const svg=$('#'+svgId),gap=34,subW=(1000-36-gap*2-12)/
   const step=pickCountStep(mx),nT=Math.max(1,Math.ceil(mx/step)),yMax=step*nT;
   const y=v=>plotB-v/yMax*plotH,bandW=plotW/3,cx0=k=>pl+bandW*(k+.5);
   let grid='';
-  for(let k=0;k<=nT;k++){const yv=step*k,py=y(yv);grid+=`<line class="grid" x1="${pl}" x2="${pr}" y1="${py}" y2="${py}"/><text x="${pl-10}" y="${py+8}" text-anchor="end">${yv.toLocaleString()}</text>`}
-  for(let k=1;k<3;k++){const px=pl+bandW*k;grid+=`<line class="grid" x1="${px}" x2="${px}" y1="${oy}" y2="${plotB}" stroke-dasharray="3,3"/>`}
+  for(let k=0;k<=nT;k++){const yv=step*k,py=y(yv);grid+=`<line class="gridline" x1="${pl}" x2="${pr}" y1="${py}" y2="${py}"/><text x="${pl-10}" y="${py+8}" text-anchor="end">${yv.toLocaleString()}</text>`}
+  for(let k=1;k<3;k++){const px=pl+bandW*k;grid+=`<line class="gridline" x1="${px}" x2="${px}" y1="${oy}" y2="${plotB}" stroke-dasharray="3,3"/>`}
   BLOCS.forEach(([k,nm],i)=>{const g=groups[k];grid+=`<text x="${cx0(i)}" y="${plotB+30}" text-anchor="middle">${nm}</text><text class="sub" x="${cx0(i)}" y="${plotB+58}" text-anchor="middle" style="fill:var(--muted)">n=${g?g.n:0}</text>`});
   out+=`<text class="title" x="${ox+subW/2}" y="26" text-anchor="middle">${label} 시행 · ${state.yearFrom}~${state.yearTo}</text>`;
   out+=`<text class="sub" x="${ox+subW/2}" y="56" text-anchor="middle">n=${rows.length} · 실선 = 블록 평균</text>`;
@@ -203,20 +190,17 @@ function renderBlocTable(list){let html='<thead><tr><th>시행국</th><th>블록
   const t=s.test,st=t?stars(t.p):null;
   html+=`<tr><td></td><td colspan="5" class="reg-note" style="text-align:left">미국블록 − 중국블록 평균차 ${t?`<b>${t.diff>0?'+':''}${t.diff.toFixed(1)}건</b> · Welch t=${t.t.toFixed(2)}, df=${t.df.toFixed(0)}, p ${pText(t.p)} <span class="${st.cls}">${st.s}</span>`:'n/a'}</td></tr>`}
  html+='</tbody>';$('#regtable').innerHTML=html}
-// 원에 마우스를 올리면 국가명과 값을 띄운다. SVG <title>은 표시가 1초쯤 늦어
-// 지도·추이 패널과 같은 HTML 툴팁 방식을 쓴다.
+// 원에 마우스를 올리면 국가명과 값을 띄운다. SVG <title>은 표시가 1초쯤 늦어 HTML 툴팁을 쓴다.
 function bindScatterTip(svg){const tip=$('#scatter-tip'),wrap=svg.parentElement;if(!tip)return;svg.querySelectorAll('circle.dot').forEach(el=>{el.onmousemove=e=>{const [nm,xv,cnt,tr]=el.dataset.tip.split('|');const rc=wrap.getBoundingClientRect();tip.style.display='block';const lx=e.clientX-rc.left,ly=e.clientY-rc.top;tip.style.left=Math.min(lx+14,rc.width-190)+'px';tip.style.top=(ly+14)+'px';tip.innerHTML=`<b>${nm}</b><br>${state.xvar==='fed_bloc'?'블록':'ideal point'} ${xv}<br>피영향 ${cnt}건<br>${state.sizevar==='gdp_usd'?'GDP':'무역비중'} ${tr}`};el.onmouseleave=()=>{tip.style.display='none'}})}
 function renderRegTable(list){let html='<thead><tr><th>시행국</th><th>n</th><th>r</th><th>p</th><th>유의성</th><th title="ln(무역비중)을 통제한 편상관, df=n-3">r (무역비중 통제)</th></tr></thead><tbody>';for(const s of list){const p=s.fit?pValue(s.fit.r,s.n):null;const st=stars(p);const pp=s.partial?pValue(s.partial.r,s.partial.n,s.partial.n-3):null;const pst=stars(pp);html+=`<tr><td>${esc(s.label)}</td><td>${s.n}</td><td>${s.fit?s.fit.r.toFixed(3):'n/a'}</td><td>${pText(p)}</td><td class="${st.cls}">${st.s}</td><td>${s.partial?`${s.partial.r.toFixed(3)} <span class="${pst.cls}">${pst.s}</span><br><span class="reg-note">n=${s.partial.n}, p ${pText(pp)}</span>`:'n/a'}</td></tr>`}html+='</tbody>';$('#regtable').innerHTML=html}
 function drawScatter(){let st;if(state.xvar==='fed_bloc'){computeScatterDomain(state.xvar,state.sizevar);st=blocPanel('scatter');renderBlocTable(st)}else{computeScatterDomain(state.xvar,state.sizevar);st=scatterPanel('scatter',state.xvar);renderRegTable(st)}const lab=$('#scatter-topn-label');if(lab){if(state.topN>=200){lab.value='전체'}else{const t=st.map(o=>o.cutTrade).filter(v=>v!=null);lab.value=t.length?`${state.topN} (≥${(Math.min(...t)*100).toFixed(t[0]<.001?3:2)}%)`:String(state.topN)}}}
 
 function bind(){const sf=$('#scatter-from'),st=$('#scatter-to');const syncRange=()=>{if(state.yearFrom>state.yearTo)[state.yearFrom,state.yearTo]=[state.yearTo,state.yearFrom];sf.value=state.yearFrom;st.value=state.yearTo;$('#scatter-from-label').value=state.yearFrom;$('#scatter-to-label').value=state.yearTo;drawScatter()};sf.oninput=()=>{state.yearFrom=+sf.value;syncRange()};st.oninput=()=>{state.yearTo=+st.value;syncRange()};const sn=$('#scatter-topn');sn.oninput=()=>{state.topN=+sn.value;drawScatter()};$('#scatter-xvar').onchange=e=>{state.xvar=e.target.value;drawScatter()};$('#scatter-sizevar').onchange=e=>{state.sizevar=e.target.value;drawScatter()};$('#scatter-targeted').onchange=e=>{state.targetedOnly=e.target.checked;drawScatter()};$('#comp-mode').onchange=e=>{state.compMode=e.target.value;drawComposition()}}
-function fillMeta(){const yrs=D.years||[];$('#meta-asof').textContent=(D.built_at||D.gta_asof||'—');$('#foot-asof').textContent=D.gta_asof||'—';const stamp=[...document.body.children].reverse().find(e=>e.matches('p.reg-note')&&/^빌드:/.test(e.textContent||''));const fb=$('#foot-build');if(stamp){fb.textContent=stamp.textContent;stamp.remove()}else if(D.built_at){fb.textContent='빌드 '+D.built_at}}
-Promise.all([fetch('ip_risk.json?v=20260824',{cache:'no-store'}).then(r=>r.json()),fetch('ip_sectors.json?v=20260824',{cache:'no-store'}).then(r=>r.json())]).then(([d,s])=>{D=d;SEC=s;computeScatterDomain();bind();fillMeta();drawScatter();drawComposition()}).catch(e=>{$('.scatter-wrap').innerHTML=`<div class="empty">데이터를 불러오지 못했습니다: ${esc(e)}</div>`});
+function fillTargeted(){const n=[0,0];for(const m of SEC.measures)if(m.t&&!m.x)n[m.m]++;$('#targeted-n').textContent=` · 미국 ${n[0]}건, 중국 ${n[1]}건`}
+Promise.all([fetch('ip_risk.json?v=__BUILD__').then(r=>r.json()),fetch('ip_sectors.json?v=__BUILD__').then(r=>r.json())]).then(([d,s])=>{D=d;SEC=s;computeScatterDomain();bind();fillTargeted();drawScatter();drawComposition()}).catch(e=>{$('.scatter-wrap').innerHTML=`<div class="empty">데이터를 불러오지 못했습니다: ${esc(e)}</div>`});
 // ---- 피영향국(AJ) 블록 구성 — 두 모드 (2026-08-25) -----------------------
-// 원본 D.composition은 발표연도별(비누적) 값이다. 누적 모드는 이걸 매번
-// 새로 합산해서 만든다(원본을 직접 고쳐 쓰면 모드를 되돌릴 수 없다 — 이전
-// 구현의 실수였다).
-function drawCompositionBars(rows,titleSuffix){const svg=$('#composition');if(!svg)return;const years=D.years,panels=[['United States of America','미국'],['China','중국']];let out='';const top=70,rowH=40,barH=28,panelW=480,gap=40,left0=0,totalW=92;
+// 누적 = D.composition(그해 12/31에 유효한 조치), 연도별 = D.composition_annual(그해 발표된 조치). 둘 다 ip_risk_site.py 가 만든다.
+function drawCompositionBars(rows){const svg=$('#composition');if(!svg)return;const years=D.years,panels=[['United States of America','미국'],['China','중국']];let out='';const top=70,rowH=40,barH=28,panelW=480,gap=40,left0=0,totalW=92;
  panels.forEach(([imp,label],pi)=>{const ox=left0+pi*(panelW+gap),labelW=66,barX=ox+labelW,barW=panelW-labelW-totalW;
   const rs=rows.filter(v=>v.implementer===imp);
   const mx=rs.reduce((a,r)=>Math.max(a,r.classified_count),0)||1;
@@ -227,9 +211,9 @@ function drawCompositionBars(rows,titleSuffix){const svg=$('#composition');if(!s
    [['own_bloc_count',tok('--bloc-self'),'comp-label'],['nonaligned_count',tok('--bloc-neutral'),'comp-na-label'],['opposing_bloc_count',tok('--bloc-other'),'comp-label']].forEach(([ck,color,cls])=>{const w=barW*r[ck]/axisMax,group=ck==='own_bloc_count'?'자국 블록':ck==='nonaligned_count'?'비동맹':'상대 블록';out+=`<rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${barH}" fill="${color}"><title>${label} ${year} · ${group} ${r[ck].toLocaleString()}건</title></rect>`;if(w>=r[ck].toLocaleString().length*12+8)out+=`<text class="${cls}" x="${(x+w/2).toFixed(1)}" y="${y+21}" text-anchor="middle">${r[ck].toLocaleString()}</text>`;x+=w});
    out+=`<text class="comp-axis" x="${(x+8).toFixed(1)}" y="${y+21}">${r.classified_count.toLocaleString()}${year===2026?'*':''}</text>`})});
  svg.innerHTML=out}
-function drawComposition(){if(!D||!D.composition||!D.composition_annual)return;const mode=state.compMode;const rows=mode==='cumulative'?D.composition:D.composition_annual;drawCompositionBars(rows,'');
+function drawComposition(){if(!D||!D.composition||!D.composition_annual)return;const mode=state.compMode;const rows=mode==='cumulative'?D.composition:D.composition_annual;drawCompositionBars(rows);
  const notes=[['United States of America','미국'],['China','중국']].map(([imp,label])=>{const rs=rows.filter(r=>r.implementer===imp);
   if(mode==='cumulative'){const last=rs.slice().sort((a,b)=>a.year-b.year).at(-1);if(!last)return `${label}: 자료 없음`;return `${label} ${last.year}년: ${last.classified_count.toLocaleString()}건 (BSV 없는 국가 ${last.excluded_count.toLocaleString()}건 제외)`}
-  const all=rs.reduce((s,r)=>s+r.all_aj_count,0),ex=rs.reduce((s,r)=>s+r.excluded_count,0),cl=rs.reduce((s,r)=>s+r.classified_count,0);return `${label} 합계: ${cl.toLocaleString()}건 (BSV 없는 국가 ${ex.toLocaleString()}건 제외)`});
+  const ex=rs.reduce((s,r)=>s+r.excluded_count,0),cl=rs.reduce((s,r)=>s+r.classified_count,0);return `${label} 합계: ${cl.toLocaleString()}건 (BSV 없는 국가 ${ex.toLocaleString()}건 제외)`});
  $('#composition-note').textContent=(mode==='cumulative'?'그해 12/31에 유효했던 조치 기준. ':'그해 발표된 조치 기준. ')+notes.join(' · ')+' · *2026년은 부분연도'}
-</script></body></html>
+</script>

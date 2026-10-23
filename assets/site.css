@@ -33,12 +33,6 @@
   --seq-3: #7ec8c5;
   --seq-4: #3f9a97;
   --seq-5: #1f5f5e;
-  /* 패널 1 지도 리스크 5단계: 파랑(낮음) → 빨강(높음). 2026-10-22 연구자 지시 */
-  --risk-0: #cfdcf2;
-  --risk-1: #8fb0e3;
-  --risk-2: #c9b8c4;
-  --risk-3: #ee8a6c;
-  --risk-4: #c0392b;
   /* 블록 3분류 */
   --bloc-self: #3f9a97;        /* 자국 블록 */
   --bloc-neutral: #c9ccd1;     /* 비동맹 */
@@ -205,9 +199,6 @@ details.sec[open] > summary::before { content: "▾"; }
 ul.changes { list-style: none; margin: 0; padding: 0; }
 ul.changes li { display: grid; grid-template-columns: 120px 1fr auto; gap: 16px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 ul.changes li .d { font-variant-numeric: tabular-nums; }
-ul.changes li .m { color: var(--muted); }
-ul.changes .badge { display: inline-block; margin-right: 10px; color: var(--ink-2); font-size: 12.5px; }
-ul.changes .badge b { font-weight: 400; color: var(--ink); }
 @media (max-width: 700px) { ul.changes li { grid-template-columns: 1fr; gap: 4px; } }
 
 /* ---- 랜딩 패널 카드 ---- */
@@ -246,8 +237,8 @@ body { font-size: 15pt; line-height: 1.45; }
 body :where(:not(svg, svg *)) { font-size: 15pt !important; }
 svg text { font-size: 21px; }
 small, .small, .note, .reg-note, .eyebrow, .label, .panel-head, th, .site-nav .links a, .chip, .legend, .tooltip, .btn.small,
-ul.changes .badge, ul.changes li .m, .rank small, .hero .meta div, .site-footer, .site-footer .build, .bars .row, .pairs, .matrix td.cell small,
-.submit-bar .hint, .decide label, .rhead .small, .toc li a, .hs2-row, .hs2-head, .comp-legend, .regtable, .api-table .small, code { font-size: 13pt !important; }
+.hero .meta div, .site-footer, .site-footer .build, .bars .row, .pairs, .matrix td.cell small,
+.submit-bar .hint, .decide label, .rhead .small, .comp-legend, .regtable, .api-table .small, code { font-size: 13pt !important; }
 .hero .meta b, .btn { font-size: 15pt !important; }
 h3, .panel-card h3, .codebook h3 { font-size: 18pt !important; }
 h2, .panel-card h2, article h2, .codebook details.sec.lv2 > summary { font-size: 24pt !important; }
@@ -305,10 +296,6 @@ input[type="checkbox"], input[type="radio"] { width: 22px; height: 22px; vertica
 .codebook table { font-size: 20pt; }
 .codebook code { font-size: 0.9em !important; }
 .codebook .tablebox { margin: 14px 0; }
-.codebook .lead { color: var(--ink-2); margin-bottom: 8px; }
-.toc { display: flex; flex-wrap: wrap; gap: 10px 14px; margin: 0 0 8px; padding: 0; list-style: none; }
-.toc li a { display: inline-block; border: 1px solid var(--line); background: var(--surface); padding: 6px 14px; }
-.toc li a:hover { border-color: var(--ink); text-decoration: none; }
 /* 패널 2 사건 상세 행·기관 현황 */
 .ev-row .ev-title { color: var(--title); }
 .ev-more td { background: var(--surface-2); padding: 12px 18px 16px; }

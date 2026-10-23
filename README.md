@@ -10,12 +10,14 @@
 | 화면 | 내용 | 코드 |
 |---|---|---|
 | `index.html` | 랜딩 — 핵심 수치, 패널 2개, 판단 대기 배너, 최근 변경 리포트 | `publish_site.py` |
-| `ip_risk.html` 패널 1 | Distortive Industrial Policy Tracker — GTA(매일 API) × BSV ideal point × IMF DOTS·WDI. 산점도·회귀, 블록 구성 (지도·순위·추이·HS 필터는 2026-10-22 삭제) | `industrial_policy_site.py` → `ip_risk_site.py` + `ip_risk_template.html` |
+| `ip_risk.html` 패널 1 | Distortive Industrial Policy Tracker — GTA(매일 API) × BSV ideal point × IMF DOTS·WDI. 산점도·회귀, 블록 구성 (지도·순위·추이·HS 필터는 2026-10-22 삭제) | `ip_risk_site.py`(자료) + `ip_risk_template.html`(패널 CSS·본문·스크립트) |
 | `ai_coop.html` 패널 2 | 한미 AI 협력 트래커 — 연구자 확정 코딩 + 매일 자동 제안. 사건 제목 클릭 → 상세(요약·비고·후속 갱신·출처), 기관명 클릭 → 그 기관의 현황 | `ai_coop_site.py` |
 | `review.html` | 판단 대기 — 자동 제안(A 새 사건·B 갱신·C 재검토)에 승인·기각·보류를 적어 GitHub Issue 로 제출 | `ai_coop_site.py` |
 | `data.html` | 사이트 JSON, 저장소, 연결된 API 목록 | `publish_site.py` (`APIS`) |
 | `codebook.html` | 화면 산식·코딩 규칙(`문서/코드북_패널.md`) + GTA 열 정의(`문서/코드북.md`) | `publish_site.py` |
 | `r/*.html` | GTA 변경 리포트 | `publish_site.py` |
+
+모든 페이지의 틀(내비·히어로 띠·Last update·푸터)은 `publish_site.page()` 하나가 만든다. 패널 모듈은 JSON 과 본문만 만들고 페이지 사양을 돌려준다(2026-10-23, 패널 1 만 손으로 쓴 내비를 들고 있다가 어긋난 일 이후).
 
 화면 글자는 본문 15pt·보조 13pt, 제목은 Noto Serif KR + 제목색(`--title`). SVG 차트 글자는 viewBox 단위 21px 로 따로 둔다(`assets/site.css`, 연구자 지시 2026-10-22). 주체 표기 `정부(미국)` 은 자료 표준이고 화면에서만 `미국(정부)` 로 보인다(`ai_coop_site.disp`).
 2026-10-22 반도체 지도·석유·태양광·석유 검증 화면과 Comtrade 수집은 삭제했다(git 이력에 남아 있다).

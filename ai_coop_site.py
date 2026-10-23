@@ -12,11 +12,8 @@ from __future__ import annotations
 
 import html
 import json
-import os
 import re
-import sys
-from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -114,18 +111,8 @@ def aggregate(events: list[dict]) -> dict:
 # ------------------------------------------------------------------ 화면
 
 
-PANEL2_PAGES = ("ai_coop.html", "review.html")  # AI Cooperation 아래 Dashboard · Review
-
-
-def nav(current: str) -> str:
-    links = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"),
-             ("data.html", "Data"), ("codebook.html", "Codebook")]
-    cur = ' aria-current="page"'
-    if current in PANEL2_PAGES:
-        current = "ai_coop.html"
-    items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in links)
-    return (f'<nav class="site-nav"><div class="wrap"><a class="brand" href="index.html">'
-            f'<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>SKL Economic Security Tracker</a><div class="links">{items}</div></div></nav>')
+# 페이지 틀(내비·히어로 띠·Last update·푸터)은 publish_site.page() 가 씌운다. 여기서는 히어로 안쪽과 본문만 만든다.
+TITLE = "한미 AI 협력 트래커"
 
 
 def subnav(current: str) -> str:
@@ -136,26 +123,19 @@ def subnav(current: str) -> str:
     return f'<nav class="subnav">{items}</nav>'
 
 
-def with_last_update(body: str, date: str) -> str:
-    """히어로(</header>) 바로 아래 왼쪽에 작은 글씨로 Last update 를 넣는다. 날짜가 없으면 그대로."""
-    if not date or "</header>" not in body:
-        return body
-    return body.replace("</header>", f'</header><div class="wrap last-update">Last update {html.escape(date)}</div>', 1)
+def hero(current: str, meta: str = "") -> str:
+    return (f'<span class="eyebrow">Panel 2 · AI Cooperation</span><div class="hero-row"><h1>{html.escape(TITLE)}</h1>'
+            f'{subnav(current)}</div>{meta}')
 
 
-def footer(asof: str, built: str) -> str:
-    sha = os.environ.get("GIT_SHA", "")[:7]
-    return (f'<footer class="site-footer"><div class="wrap"><span>SKL Economic Security Tracker · 연구용 자료</span>'
-            f'<span class="build">자료 {html.escape(asof)} · 빌드 {html.escape(built)}{(" · " + sha) if sha else ""}</span></div></footer>')
-
-
-def render(agg: dict, meta: dict) -> str:
+def render(agg: dict, meta: dict) -> dict:
+    """ai_coop.html 의 페이지 사양(publish_site.page 인자 + file)."""
     n = agg["n"]
     asof = meta.get("fetched_at", "")[:10] or "—"
-    built = datetime.now().strftime("%Y-%m-%d %H:%M")
+    spec = {"file": "ai_coop.html", "title": f"{TITLE} · SKL", "hero": hero("ai_coop.html"),
+            "current": "ai_coop.html", "asof": asof}
     if n == 0:
-        body = ('<div class="wrap section"><div class="empty">아직 사건 자료가 없습니다.</div></div>')
-        return _page("한미 AI 협력 트래커", "", body, asof, built)
+        return spec | {"body": '<div class="wrap section"><div class="empty">아직 사건 자료가 없습니다.</div></div>'}
 
     def pct(c: int) -> str:
         return f"{c / n * 100:.1f}%"
@@ -181,10 +161,6 @@ def render(agg: dict, meta: dict) -> str:
     pairs = "".join(
         f'<li><span>{html.escape(p["us"])}</span><span class="arrow">↔</span><span>{html.escape(p["kr"])}</span><span class="n">{p["n"]}</span></li>'
         for p in agg["pairs"][:15])
-
-    hero_meta = ""   # 수치 없이 제목만 (연구자 지시 2026-10-22)
-    _unused = (f'<div class="meta"><div>사건<b>{n:,}건</b></div><div>기간<b>{agg["years"][0]}–{agg["years"][-1]}</b></div>'
-                 f'<div>확정계약<b>{agg["form_total"].get("확정계약", 0)}건</b></div><div>확정 코딩<b>{agg["status"].get("confirmed", 0)}건</b></div><div>자료 기준<b>{html.escape(asof)}</b></div></div>')
 
     body = f'''
 <div class="wrap">
@@ -257,20 +233,7 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   goHash(); window.addEventListener('hashchange',goHash); q.addEventListener('input',ev=>{{draw(ev.target.value); if(ev.target.value) document.getElementById('records-box').open=true;}});
 }});
 </script>'''
-    return _page("한미 AI 협력 트래커", hero_meta, body, asof, built)
-
-
-def _page(title: str, hero_meta: str, body: str, asof: str, built: str) -> str:
-    return f'''<!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} · SKL</title><link rel="stylesheet" href="site.css"></head>
-<body>{nav("ai_coop.html")}
-<header class="hero"><div class="wrap"><span class="eyebrow">Panel 2 · AI Cooperation</span><div class="hero-row"><h1>{html.escape(title)}</h1>{subnav("ai_coop.html")}</div>
-{hero_meta}</div></header>
-{with_last_update("</header>", built[:10])[len("</header>"):]}
-{body}
-{footer(asof, built)}
-</body></html>'''
+    return spec | {"body": body}
 
 
 # ------------------------------------------------------------------ 판단 대기(review.html)
@@ -289,8 +252,8 @@ def _esc(v) -> str:
     return html.escape("" if v is None else str(v))
 
 
-def render_review(props: list[dict], events_by_id: dict) -> str:
-    built = datetime.now().strftime("%Y-%m-%d %H:%M")
+def render_review(props: list[dict], events_by_id: dict) -> dict:
+    """review.html 의 페이지 사양(publish_site.page 인자 + file)."""
     by_task = {k: [p for p in props if p["task"] == k] for k in ("A", "B", "C")}
     hero_meta = (f'<div class="meta"><div>판단 대기<b>{len(props)}건</b></div><div>A 새 사건<b>{len(by_task["A"])}</b></div>'
             f'<div>B 갱신<b>{len(by_task["B"])}</b></div><div>C 재검토<b>{len(by_task["C"])}</b></div></div>')
@@ -416,25 +379,22 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
 })();
 </script>""" % json.dumps(REPO)
     body = howto + "".join(sections) + submit_bar + script
-    head = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<title>판단 대기 · SKL</title><link rel="stylesheet" href="site.css"></head>\n'
-    hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Panel 2 · AI Cooperation</span><div class="hero-row"><h1>한미 AI 협력 트래커</h1>' + subnav("review.html") + '</div>'
-            + hero_meta + '</div></header>'
-            + with_last_update("</header>", built[:10])[len("</header>"):] + '\n')
-    return head + "<body>" + nav("review.html") + "\n" + hero + body + "\n" + footer("", built) + "\n</body></html>"
+    return {"file": "review.html", "title": "판단 대기 · SKL", "hero": hero("review.html", hero_meta),
+            "body": body, "current": "review.html", "asof": ""}
 
 
-def build(out: Path) -> bool:
+def build(out: Path) -> list[dict]:
+    """ai_coop.json·review.json 을 쓰고 두 페이지의 사양을 돌려준다(HTML 은 publish_site 가 쓴다)."""
     events, meta = load_events()
     agg = aggregate(events)
     (out / "ai_coop.json").write_text(json.dumps({"as_of": meta["as_of"], "n": agg["n"], "events": events, "agg": agg, "orgs": load_orgs()},
                                                  ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    (out / "ai_coop.html").write_text(render(agg, {"fetched_at": meta["as_of"]}), encoding="utf-8")
     props = pending_proposals()
     raw_by_id = {e["id"]: e for e in json.loads(EVENTS.read_text(encoding="utf-8")).get("events", [])} if EVENTS.is_file() else {}
-    (out / "review.html").write_text(render_review(props, raw_by_id), encoding="utf-8")   # 원 레코드(track·sectors) 기준
     (out / "review.json").write_text(json.dumps({"pending": len(props), "by_task": {k: sum(1 for p in props if p["task"] == k) for k in "ABC"}}, ensure_ascii=False), encoding="utf-8")
     print(f"[ai_coop_site] 사건 {agg['n']}건 (확정 {agg['status'].get('confirmed', 0)}, 자동 {agg['status'].get('auto', 0)})")
-    return agg["n"] > 0
+    return [render(agg, {"fetched_at": meta["as_of"]}),
+            render_review(props, raw_by_id)]   # 원 레코드(track·sectors) 기준
 
 
 if __name__ == "__main__":

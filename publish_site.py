@@ -29,7 +29,6 @@ from datetime import datetime
 from pathlib import Path
 
 import ai_coop_site
-import industrial_policy_site
 import ip_risk_site
 
 HERE = Path(__file__).resolve().parent
@@ -49,15 +48,6 @@ REPORT_STAMP = re.compile(r"^change_report_(\d{8})_(\d{6})\.md$")
 # 리포트 머리말의 "- 이름: 값" 줄. 값이 없으면 None 으로 둔다.
 META_LINE = re.compile(r"^-\s*([^:]+?)\s*:\s*(.+?)\s*$", re.M)
 
-# "## 요약" 표의 각 줄. 건수 자리에 "확인 안 함 (...)" 같은 글도 들어온다.
-SUMMARY_ROW = re.compile(r"^\|\s*(?!구분|-)([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$", re.M)
-
-# 2026-08-21부터 변경 리포트가 두 관심군의 합계를 본문에 직접 쓴다.
-# 이전 리포트도 목록에서 빠지지 않도록 아래 Report.topic_counts()에서 호환 처리한다.
-CHANGED_TOPIC_COUNT = re.compile(
-    r"이번 변경분(?:\([^)]*\))? 중 (수출통제|산업정책) 조치 \*\*([\d,]+)건\*\*"
-)
-
 
 def parse_stamp(name: str) -> datetime | None:
     matched = REPORT_STAMP.match(name)
@@ -69,40 +59,9 @@ def parse_stamp(name: str) -> datetime | None:
         return None
 
 
-def section(text: str, heading: str) -> str:
-    """`## heading` 부터 다음 `## ` 직전까지."""
-    start = re.search(rf"^##\s+{re.escape(heading)}\s*$", text, re.M)
-    if not start:
-        return ""
-    rest = text[start.end():]
-    nxt = re.search(r"^##\s+", rest, re.M)
-    return rest[: nxt.start()] if nxt else rest
-
-
-def summary_of(text: str) -> dict[str, str]:
-    """요약 표를 {구분: 건수} 로. 없으면 빈 dict."""
-    block = section(text, "요약")
-    if not block:
-        return {}
-    out: dict[str, str] = {}
-    for label, value in SUMMARY_ROW.findall(block):
-        if set(label) <= set("-: "):      # 구분선 행
-            continue
-        out[label.strip()] = value.strip()
-    return out
-
-
 def meta_of(text: str) -> dict[str, str]:
     head = text.split("##", 1)[0]
     return {k.strip(): v.strip() for k, v in META_LINE.findall(head)}
-
-
-def pick(summary: dict[str, str], prefix: str) -> str | None:
-    """'신규 (발표일 ...)' 처럼 뒤에 괄호가 붙는 열쇠를 앞부분으로 찾는다."""
-    for key, value in summary.items():
-        if key.startswith(prefix):
-            return value
-    return None
 
 
 class Report:
@@ -111,7 +70,6 @@ class Report:
         self.when = when
         self.text = path.read_text(encoding="utf-8")
         self.meta = meta_of(self.text)
-        self.summary = summary_of(self.text)
 
     @property
     def slug(self) -> str:
@@ -121,107 +79,57 @@ class Report:
     def data_date(self) -> str:
         return self.meta.get("자료 기준일") or self.when.strftime("%Y-%m-%d")
 
-    @property
-    def mode(self) -> str:
-        return self.meta.get("실행 모드") or ""
 
-    @property
-    def rows(self) -> str:
-        return self.meta.get("전체 표본") or ""
-
-    def counts(self) -> list[tuple[str, str]]:
-        """목록 화면에 배지로 띄울 값. 없는 항목은 조용히 뺀다.
-
-        2026-08-13에 '신규'(직전 기준일 이후 발표)와 '지연 등재'(그 이전 발표)를
-        나누지 않기로 했다. 매일 받으면 '신규'가 구조적으로 늘 0이라 뜻이 없다.
-        auto_update.py 는 그날부터 '새로 들어온 것' 한 줄로 쓰지만, 그 전에 만든
-        리포트는 두 줄로 남아 있다. 여기서 합쳐 화면 표기를 하나로 맞춘다.
-        """
-        new_total = 0
-        found_new = False
-        for key, value in self.summary.items():
-            if not key.startswith(("새로 들어온 것", "신규", "지연 등재")):
-                continue
-            digits = value.split("(")[0].strip().replace(",", "")
-            if digits.isdigit():
-                new_total += int(digits)
-                found_new = True
-
-        out: list[tuple[str, str]] = []
-        if found_new:
-            out.append(("신규", f"{new_total:,}"))
-        for label in ("수정", "삭제"):
-            value = pick(self.summary, label)
-            if not value:
-                continue
-            # 삭제 칸에는 '확인 안 함 (빠른 업데이트 모드)' 처럼 사유가 붙는다.
-            # 배지에는 앞부분만 쓴다. 전문은 리포트 안 요약표에 그대로 있다.
-            out.append((label, value.split("(")[0].strip() or value))
-        out.extend(self.topic_counts(found_new))
-        return out
-
-    def topic_counts(self, is_change_report: bool) -> list[tuple[str, str]]:
-        """이번 변경분 중 수출통제·산업정책 건수를 목록 배지로 돌려준다.
-
-        새 형식은 본문의 명시적 합계를 사용한다. 2026-08-19~20 구형 리포트는
-        수출통제 0건 문구와 신규 전체 목록의 BERT 라벨을 읽는다. 최초 구축
-        리포트에는 변경분이 없으므로 당시 전체 표본의 두 관심군 총수를 쓴다.
-        """
-        explicit = {
-            label: int(value.replace(",", ""))
-            for label, value in CHANGED_TOPIC_COUNT.findall(self.text)
-        }
-        export_block = section(self.text, "수출통제 조치 (MAST Chapter P 9종)")
-
-        if "수출통제" not in explicit and "수출통제 조치는 없다" in export_block:
-            explicit["수출통제"] = 0
-
-        if is_change_report and "산업정책" not in explicit:
-            # 전용 산업정책 절이 생기기 전 리포트: 수출통제 절 앞의 주 변경표만
-            # 대상으로 삼아 분포표나 전용 표의 중복을 피한다.
-            main_changes = re.split(r"^##\s+수출통제 조치", self.text, maxsplit=1, flags=re.M)[0]
-            explicit["산업정책"] = sum(
-                1 for line in main_changes.splitlines()
-                if line.startswith("|") and "산업정책" in [cell.strip() for cell in line.strip("|").split("|")]
-            )
-
-        if not is_change_report:
-            if "수출통제" not in explicit:
-                matched = re.search(r"전체\s+([\d,]+)건", export_block)
-                if matched:
-                    explicit["수출통제"] = int(matched.group(1).replace(",", ""))
-            if "산업정책" not in explicit:
-                ip_block = section(self.text, "산업정책 분류 (BERT)")
-                matched = re.search(r"^\|\s*산업정책\s*\|\s*([\d,]+)\s*\|", ip_block, re.M)
-                if matched:
-                    explicit["산업정책"] = int(matched.group(1).replace(",", ""))
-
-        return [
-            (label, f"{explicit[label]:,}")
-            for label in ("수출통제", "산업정책") if label in explicit
-        ]
+# ---- 모든 페이지의 틀(내비·히어로·Last update·푸터)은 여기 page() 하나만 만든다 (2026-10-23).
+# 패널 모듈(ip_risk_site, ai_coop_site)은 히어로 안쪽과 본문만 돌려주고 틀은 쓰지 않는다. 전에는 Industrial Policy
+# 페이지가 손으로 쓴 템플릿에 내비·푸터를 따로 들고 있어서, 다른 페이지에서 지운 Review 메뉴가 그 페이지에만 남았다.
+NAV = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"),
+       ("data.html", "Data"), ("codebook.html", "Codebook")]
+PANEL2_PAGES = ("ai_coop.html", "review.html")   # AI Cooperation 아래 Dashboard · Review 탭
+HOME_ICON = ('<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z" '
+             'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>')
 
 
+def nav(current: str) -> str:
+    current = "ai_coop.html" if current in PANEL2_PAGES else current
+    cur = ' aria-current="page"'
+    items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in NAV)
+    return (f'<nav class="site-nav"><div class="wrap"><a class="brand" href="index.html">{HOME_ICON}{html.escape(SITE_TITLE)}</a>'
+            f'<div class="links">{items}</div></div></nav>')
 
-def page(title: str, body: str, depth: int = 0, current: str = "") -> str:
+
+def footer(asof: str, built: str) -> str:
+    sha = os.environ.get("GIT_SHA", "")[:7]
+    data = f"자료 {html.escape(asof)} · " if asof else ""
+    return (f'<footer class="site-footer"><div class="wrap"><span>{html.escape(SITE_TITLE)} · 연구용 자료</span>'
+            f'<span class="build">{data}빌드 {html.escape(built)}{(" · " + sha) if sha else ""}</span></div></footer>')
+
+
+def page(title: str, hero: str, body: str, *, current: str = "", asof: str | None = None,
+         head: str = "", depth: int = 0) -> str:
+    """hero 는 민트 띠 안쪽(eyebrow·h1 등). 비우면 띠와 Last update 를 넣지 않는다(변경 리포트).
+    asof 는 푸터의 자료 기준일. 주지 않으면 GTA 자료 기준일(state.json)."""
+    now = datetime.now()
     up = "../" * depth
-    nav = ai_coop_site.nav(current)
-    foot = ai_coop_site.footer(STATE.get("data_end_date", "—"), datetime.now().strftime("%Y-%m-%d %H:%M"))
+    chrome_nav = nav(current)
+    foot = footer(STATE.get("data_end_date", "—") if asof is None else asof, now.strftime("%Y-%m-%d %H:%M"))
     if depth:
-        nav = nav.replace('href="', f'href="{up}')
+        chrome_nav = chrome_nav.replace('href="', f'href="{up}')
         foot = foot.replace('href="', f'href="{up}')
-    body = ai_coop_site.with_last_update(body, datetime.now().strftime("%Y-%m-%d"))   # 사이트를 마지막으로 만든 날 (자료 기준일은 푸터)
+    if hero:   # Last update = 사이트를 마지막으로 만든 날 (자료 기준일은 푸터)
+        hero = (f'<header class="hero"><div class="wrap">{hero}</div></header>\n'
+                f'<div class="wrap last-update">Last update {now:%Y-%m-%d}</div>\n')
     return f"""<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title>
-<link rel="stylesheet" href="{up}site.css">
+<link rel="stylesheet" href="{up}site.css">{head}
 </head>
 <body>
-{nav}
-{body}
+{chrome_nav}
+{hero}{body}
 {foot}
 </body>
 </html>
@@ -324,7 +232,7 @@ def to_html(md_text: str) -> str:
 def render_report(report: Report) -> str:
     body = to_html(report.text)
     head = '<main class="wrap" style="padding-top:32px"><a class="back" href="../index.html">← 전체 목록</a>\n<article>\n'
-    return page(f"{report.data_date} 변경 내역 · {SITE_TITLE}",
+    return page(f"{report.data_date} 변경 내역 · {SITE_TITLE}", "",
                 head + body + "\n</article></main>", depth=1, current="index.html")
 
 
@@ -336,9 +244,8 @@ MILESTONES = [
 ]
 
 
-def render_index(reports: list[Report]) -> str:
-    hero = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Research Dashboard</span>'
-            f'<h1>{html.escape(SITE_TITLE)}</h1></div></header>')
+def render_index() -> str:
+    hero = f'<span class="eyebrow">Research Dashboard</span><h1>{html.escape(SITE_TITLE)}</h1>'
     pending = ai_coop_site.pending_proposals()
     banner = ""
     if pending:
@@ -354,7 +261,7 @@ def render_index(reports: list[Report]) -> str:
     items = "".join(f'<li><span class="d">{html.escape(d)}</span><span>{html.escape(t)}</span></li>' for d, t in MILESTONES)
     changes = ('<section class="section"><div class="wrap"><span class="eyebrow">Recent changes</span>'
                f'<div class="panel"><div class="panel-body"><ul class="changes">{items}</ul></div></div></div></section>')
-    return page(SITE_TITLE, hero + banner + cards + changes, current="index.html")
+    return page(SITE_TITLE, hero, banner + cards + changes, current="index.html")
 
 
 # 파이프라인이 실제로 호출하는 외부 API. 코드의 상수와 같이 바뀌어야 한다.
@@ -375,7 +282,7 @@ APIS = [
 ]
 
 
-def render_data(reports: list[Report]) -> str:
+def render_data() -> str:
     repo = REPO_URL
     files = [("ip_risk.json", "패널 1 — 국가·연도별 리스크·노출·거리"), ("ip_sectors.json", "패널 1 — 조치 단위 원자료(산점도·회귀)"),
              ("ai_coop.json", "패널 2 — 사건 목록·집계·기관 목록")]
@@ -384,9 +291,7 @@ def render_data(reports: list[Report]) -> str:
         f'<tr><td>{html.escape(panel)}</td><td>{html.escape(n)}<span class="small">{html.escape(ep)}</span><span class="small">{html.escape(where)}</span></td>'
         f'<td>{html.escape(use)}</td><td>{html.escape(when)}</td><td>{html.escape(key)}</td></tr>'
         for panel, n, ep, use, when, key, where in APIS)
-    body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Data</span><h1>자료의 출처</h1>'
-            f'</div></header>'
-            f'<section class="section"><div class="wrap grid grid-2"><div class="panel"><div class="panel-head">사이트 JSON</div>'
+    body = (f'<section class="section"><div class="wrap grid grid-2"><div class="panel"><div class="panel-head">사이트 JSON</div>'
             f'<div class="panel-body"><table><tbody>{rows}</tbody></table></div></div>'
             f'<div class="panel"><div class="panel-head">저장소</div><div class="panel-body"><p><a href="{repo}">github.com/lskyonsei-jpg/skl-economic-security-tracker</a></p>'
             f'<p><a href="{repo}/releases/tag/state">Release “state”</a> — master.parquet(GTA 전량 + BERT 라벨), prediction_cache.json, state.json, 변경 리포트, 기준자료, AI 협력 사건 파일</p>'
@@ -395,7 +300,7 @@ def render_data(reports: list[Report]) -> str:
             f'<section class="section"><div class="wrap"><span class="eyebrow" style="text-transform:none">APIs</span><div class="panel"><div class="panel-head" style="text-transform:none">연결된 APIs</div>'
             f'<div class="tablebox" style="border:0;margin:0"><table class="api-table"><thead><tr><th style="width:11%">패널</th><th style="width:34%">API · 코드</th><th>무엇을 하나</th><th style="width:11%">주기</th><th style="width:15%">키</th></tr></thead><tbody>{api_rows}</tbody></table></div>'
             f'<div class="panel-body"><p class="note">키는 GitHub Secrets에만 있습니다. 코드에 담지 않습니다.</p></div></div></div></section>')
-    return page(f"자료 · {SITE_TITLE}", body, current="data.html")
+    return page(f"자료 · {SITE_TITLE}", '<span class="eyebrow">Data</span><h1>자료의 출처</h1>', body, current="data.html")
 
 
 H2_SECTION_RE = re.compile(r"<h2>(.*?)</h2>(.*?)(?=<h2>|\Z)", re.DOTALL)
@@ -434,10 +339,8 @@ def render_codebook() -> str:
     for text in (panels, gta):
         if text.strip():
             parts.append(collapse_h2(md_to_html_plain(text)))
-    body = (f'<header class="hero"><div class="wrap"><span class="eyebrow">Codebook</span><h1>코드북</h1>'
-            f'</div></header>'
-            f'<section class="section"><div class="wrap"><div class="codebook">{"".join(parts)}</div></div></section>')
-    return page(f"코드북 · {SITE_TITLE}", body, current="codebook.html")
+    body = (f'<section class="section"><div class="wrap"><div class="codebook">{"".join(parts)}</div></div></section>')
+    return page(f"코드북 · {SITE_TITLE}", '<span class="eyebrow">Codebook</span><h1>코드북</h1>', body, current="codebook.html")
 
 
 def collect(logs: Path) -> list[Report]:
@@ -471,8 +374,6 @@ def _force_remove(func, path, error):
         raise error
 
 
-
-
 def build(logs: Path = LOGS, out: Path = SITE, quiet: bool = False) -> Path:
     """site/ 를 통째로 다시 만든다. 반환값은 site 경로. 2026-10-22: 패널 2개 체제."""
     reports = collect(logs)
@@ -482,19 +383,22 @@ def build(logs: Path = LOGS, out: Path = SITE, quiet: bool = False) -> Path:
     (out / ".nojekyll").write_text("", encoding="utf-8")   # GitHub Pages 의 Jekyll 처리 끄기
     shutil.copy2(HERE / "assets" / "site.css", out / "site.css")
 
-    (out / "index.html").write_text(render_index(reports), encoding="utf-8")
-    (out / "data.html").write_text(render_data(reports), encoding="utf-8")
+    (out / "index.html").write_text(render_index(), encoding="utf-8")
+    (out / "data.html").write_text(render_data(), encoding="utf-8")
     (out / "codebook.html").write_text(render_codebook(), encoding="utf-8")
     for report in reports:
         (out / "r" / f"{report.slug}.html").write_text(render_report(report), encoding="utf-8")
 
-    industrial_policy_site.build(out)      # ip_us_cn.json — 패널 1 의 입력
-    risk_built = ip_risk_site.build(out)
-    ai_built = ai_coop_site.build(out)
+    # 패널 모듈은 자기 JSON 을 쓰고 페이지 사양(file + page() 인자)을 돌려준다. 틀은 여기서 한 번에 씌운다.
+    panel1 = ip_risk_site.build(out, STATE.get("data_end_date", "—"))
+    panel2 = ai_coop_site.build(out)
+    for spec in panel1 + panel2:
+        spec = dict(spec)
+        (out / spec.pop("file")).write_text(page(**spec), encoding="utf-8")
 
     if not quiet:
         size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
-        print(f"    사이트 생성   리포트 {len(reports)}건, 패널1 {risk_built}, 패널2 {ai_built}, {size / 1024:,.0f}KB")
+        print(f"    사이트 생성   리포트 {len(reports)}건, 패널1 {bool(panel1)}, 패널2 {bool(panel2)}, {size / 1024:,.0f}KB")
     return out
 
 
