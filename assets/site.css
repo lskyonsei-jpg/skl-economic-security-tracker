@@ -93,12 +93,8 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
 .site-nav { background: var(--bg); border-bottom: 1px solid var(--line); }
 .site-nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 72px; gap: 24px; }
 .site-nav .brand { display: flex; align-items: center; gap: 10px; font-size: 18px; letter-spacing: 1px; }
-.site-nav .brand .mark { width: 18px; height: 18px; position: relative; display: inline-block; }
-.site-nav .brand .mark::before, .site-nav .brand .mark::after {
-  content: ""; position: absolute; background: var(--ink);
-}
-.site-nav .brand .mark::before { left: 8px; top: 0; width: 2px; height: 18px; }
-.site-nav .brand .mark::after { top: 8px; left: 0; width: 18px; height: 2px; }
+.site-nav .brand .mark { width: 22px; height: 22px; display: inline-block; vertical-align: -4px; color: var(--ink); }   /* Home 아이콘 (연구자 지시 2026-10-23) */
+
 .site-nav .links { display: flex; gap: 32px; }
 .site-nav .links a { font-size: 13px; letter-spacing: 3px; text-transform: uppercase; color: var(--ink-2); white-space: nowrap; }
 .site-nav .links a:hover, .site-nav .links a[aria-current="page"] { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--ink); padding-bottom: 2px; }
@@ -372,7 +368,15 @@ a.org { border-bottom: 1px dotted var(--muted); }
 .rcard .explain p { margin: 10px 0 0; }
 .rcard .explain p > b { color: var(--title); }
 .rcard .explain table { margin-top: 10px; }
-/* Last update 는 모든 페이지에서 깜박인다 (연구자 지시 2026-10-23) */
-.last-update { color: var(--ink); animation: twinkle 1.4s ease-in-out infinite; }
-@keyframes twinkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
-@media (prefers-reduced-motion: reduce) { .last-update { animation: none; } }
+/* 판단 대기 — 여백 정리, 제출 방법 한 줄, '기존' 링크, 대시보드 사건 강조 (연구자 지시 2026-10-23) */
+.howto { padding: 6px 0 0; }
+.howto details { border: 0; }
+.howto details > summary { padding: 6px 0; }
+.howto details .note { margin: 0 0 6px; }
+.section.rsec { padding: 18px 0 6px; }
+.section.rsec + .section.rsec { border-top: 0; }
+.submit-bar { margin-top: 18px; }
+a.ev-link { color: var(--ink); border-bottom: 1px dotted var(--muted); }
+a.ev-link:hover { color: var(--navy); text-decoration: none; border-bottom-style: solid; }
+tr.ev-row.hl td { background: var(--mint); }
+.submit-bar ~ .site-footer { margin-top: 0; }   /* 제출 바와 푸터 사이 흰 띠 제거 (연구자 지시 2026-10-23) */

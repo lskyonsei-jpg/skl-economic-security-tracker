@@ -125,7 +125,7 @@ def nav(current: str) -> str:
         current = "ai_coop.html"
     items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in links)
     return (f'<nav class="site-nav"><div class="wrap"><a class="brand" href="index.html">'
-            f'<span class="mark"></span>SKL Economic Security Tracker</a><div class="links">{items}</div></div></nav>')
+            f'<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>SKL Economic Security Tracker</a><div class="links">{items}</div></div></nav>')
 
 
 def subnav(current: str) -> str:
@@ -191,7 +191,7 @@ def render(agg: dict, meta: dict) -> str:
   <section class="section">
     <span class="eyebrow">Timeline</span>
     <div class="panel"><div class="panel-head"><span>사건 타임라인</span><span id="tl-legend" class="legend"></span><a href="codebook.html#panel2">코드북</a></div>
-      <div class="panel-body timeline-wrap"><svg id="timeline" viewBox="0 0 1000 300" aria-label="한미 AI 협력 사건 타임라인"></svg><div id="tl-tip" class="tooltip"></div></div></div>
+      <div class="panel-body timeline-wrap"><svg id="timeline" viewBox="0 0 1000 420" aria-label="한미 AI 협력 사건 타임라인"></svg><div id="tl-tip" class="tooltip"></div></div></div>
   </section>
   <section class="section grid grid-2">
     <div><span class="eyebrow">Form</span><div class="panel"><div class="panel-head">형태별 건수 · 비중 (분모 {n}건)</div><div class="panel-body bars">{bars}</div></div></div>
@@ -215,7 +215,7 @@ const FORM_COLOR={{}};FORMS.forEach((f,i)=>FORM_COLOR[f]=css('--cat-'+(i+1)));
 fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   const E=D.events; const tip=document.getElementById('tl-tip');
   document.getElementById('tl-legend').innerHTML=FORMS.map(f=>`<span><i style="background:${{FORM_COLOR[f]}}"></i>${{f}}</span>`).join('');
-  const svg=document.getElementById('timeline'); const W=1000,H=360,L=150,R=24,T=44,B=50;
+  const svg=document.getElementById('timeline'); const W=1000,H=420,L=150,R=24,T=44,B=50;
   const t0=new Date(E[0].date+'T00:00:00Z'), t1=new Date(E[E.length-1].date+'T00:00:00Z');
   const y0=t0.getUTCFullYear(), y1=t1.getUTCFullYear()+1;
   const x=d=>L+(new Date(d+'T00:00:00Z')-Date.UTC(y0,0,1))/(Date.UTC(y1,0,1)-Date.UTC(y0,0,1))*(W-L-R);
@@ -224,7 +224,12 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   ADMIN.forEach(([name,d])=>{{const yy=d.slice(0,4); if(yy<y0||yy>y1)return; const xx=x(d); s+=`<line x1="${{xx}}" x2="${{xx}}" y1="${{T-14}}" y2="${{H-B}}" stroke="${{css('--ink')}}" stroke-dasharray="3 3"/><text class="tl-admin" x="${{xx+6}}" y="${{T-2}}">${{name}}</text>`;}});
   const lanes=FORMS.length, laneH=(H-T-B-20)/Math.max(lanes,1);
   FORMS.forEach((f,i)=>{{const yy=T+20+laneH*i+laneH/2; s+=`<text class="tl-axis" x="${{L-10}}" y="${{yy+8}}" text-anchor="end">${{f}}</text>`;}});
-  E.forEach((e,i)=>{{const li=Math.max(FORMS.indexOf(e.form),0); const yy=T+20+laneH*li+laneH/2+((i%5)-2)*4; s+=`<circle data-i="${{i}}" cx="${{x(e.date)}}" cy="${{yy}}" r="7" fill="${{FORM_COLOR[e.form]||css('--muted')}}" fill-opacity=".85"/>`;}});
+  // 같은 줄에서 가로로 16 단위 안에 있는 점은 위아래 칸(±16)으로 비켜 놓는다 — 점마다 따로 집을 수 있게 (연구자 지시 2026-10-23)
+  const placed=FORMS.map(()=>[]); const STEP=16, MINDX=16;
+  E.map((e,i)=>({{e,i,li:Math.max(FORMS.indexOf(e.form),0),cx:x(e.date)}})).sort((a,b)=>a.cx-b.cx).forEach(d=>{{
+    const order=[0,1,-1,2,-2,3,-3]; let k=order.find(k=>!placed[d.li].some(q=>q.k===k&&Math.abs(q.cx-d.cx)<MINDX)); if(k===undefined)k=0;
+    placed[d.li].push({{k,cx:d.cx}}); const yy=T+20+laneH*d.li+laneH/2+k*STEP;
+    s+=`<circle data-i="${{d.i}}" cx="${{d.cx}}" cy="${{yy}}" r="7" fill="${{FORM_COLOR[d.e.form]||css('--muted')}}" fill-opacity=".9"/>`;}});
   svg.innerHTML=s;
   svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`<b>${{e.date}}</b><br>${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
   svg.addEventListener('mouseleave',()=>tip.style.display='none');
@@ -238,7 +243,7 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
       (e.prior_event_id?`<span>선행</span><span>${{esc((E.find(x=>x.id===e.prior_event_id)||{{}}).content||e.prior_event_id)}}</span>`:'')+
       (ups?`<span>후속 갱신</span><span><ul class="ev-updates">${{ups}}</ul></span>`:'')+(srcs?`<span>출처</span><span>${{srcs}}</span>`:'')+`</div></div>`;}};
   const draw=q=>{{const qq=(q||'').toLowerCase(); const rows=[...E].reverse().filter(e=>(!orgSel||e.us.includes(orgSel)||e.kr.includes(orgSel))&&(!qq||JSON.stringify(e).toLowerCase().includes(qq)));
-    tb.innerHTML=rows.map((e,i)=>`<tr class="ev-row" data-i="${{i}}"><td class="d">${{e.date}}</td><td><a href="#" class="ev-title">${{esc(e.content)}}</a></td><td>${{esc(e.form)}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{e.us.map(orgLink).join(', ')}}</td><td>${{e.kr.map(orgLink).join(', ')}}</td><td>${{esc(e.amount)}}</td><td><span class="chip" style="cursor:default">${{e.status==='confirmed'?'확정':'자동'}}</span></td></tr><tr class="ev-more" hidden><td colspan="8">${{detail(e)}}</td></tr>`).join('');
+    tb.innerHTML=rows.map((e,i)=>`<tr class="ev-row" data-i="${{i}}" data-id="${{esc(e.id)}}"><td class="d">${{e.date}}</td><td><a href="#" class="ev-title">${{esc(e.content)}}</a></td><td>${{esc(e.form)}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{e.us.map(orgLink).join(', ')}}</td><td>${{e.kr.map(orgLink).join(', ')}}</td><td>${{esc(e.amount)}}</td><td><span class="chip" style="cursor:default">${{e.status==='confirmed'?'확정':'자동'}}</span></td></tr><tr class="ev-more" hidden><td colspan="8">${{detail(e)}}</td></tr>`).join('');
     const card=document.getElementById('org-card');
     if(orgSel){{const o=ORGS[orgSel]||{{}}; const forms={{}}; rows.forEach(e=>forms[e.form]=(forms[e.form]||0)+1); const partners={{}}; rows.forEach(e=>(e.us.includes(orgSel)?e.kr:e.us).forEach(p=>partners[p]=(partners[p]||0)+1));
       card.innerHTML=`<div class="org-box"><b>${{esc(orgSel)}}</b> <span class="small">${{o.type?esc(o.type)+' · ':''}}${{o.country?esc(o.country)+' · ':''}}사건 ${{rows.length}}건 · ${{FORMS.filter(f=>forms[f]).map(f=>f+' '+forms[f]).join(' · ')}}</span><br><span class="small">상대: ${{Object.entries(partners).sort((a,b)=>b[1]-a[1]).map(([p,n])=>orgLink(p)+' '+n).join(', ')||'-'}}</span> <button class="btn small" id="org-clear" type="button">전체 보기</button></div>`;
@@ -246,7 +251,10 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   tb.addEventListener('click',ev=>{{const t=ev.target.closest('a.ev-title'); if(t){{ev.preventDefault(); const more=t.closest('tr').nextElementSibling; more.hidden=!more.hidden; return;}}
     const o=ev.target.closest('a.org'); if(o){{ev.preventDefault(); orgSel=o.dataset.org; draw(document.getElementById('q').value); document.getElementById('records-box').open=true; document.getElementById('org-card').scrollIntoView({{block:'nearest'}});}}}});
   document.getElementById('org-card').addEventListener('click',ev=>{{const o=ev.target.closest('a.org'); if(o){{ev.preventDefault(); orgSel=o.dataset.org; draw(document.getElementById('q').value);}}}});
-  draw(''); const q=document.getElementById('q'); q.addEventListener('input',ev=>{{draw(ev.target.value); if(ev.target.value) document.getElementById('records-box').open=true;}});
+  draw(''); const q=document.getElementById('q');
+  const goHash=()=>{{const h=decodeURIComponent(location.hash.slice(1)); if(!h)return; const tr=tb.querySelector(`tr[data-id="${{h.replace(/"/g,'')}}"]`); if(!tr)return;
+    document.getElementById('records-box').open=true; tr.nextElementSibling.hidden=false; tb.querySelectorAll('tr.hl').forEach(r=>r.classList.remove('hl')); tr.classList.add('hl'); tr.scrollIntoView({{block:'center'}});}};
+  goHash(); window.addEventListener('hashchange',goHash); q.addEventListener('input',ev=>{{draw(ev.target.value); if(ev.target.value) document.getElementById('records-box').open=true;}});
 }});
 </script>'''
     return _page("한미 AI 협력 트래커", hero_meta, body, asof, built)
@@ -299,6 +307,10 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
         if field == "is_event":
             return "사건 삭제 권장"
         return "값 삭제 권장" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
+    def ev_link(tgt: dict) -> str:   # 기존 사건 → 대시보드 사건 목록의 그 행으로 (a 태그라 Ctrl-클릭·가운데 클릭으로 새 탭)
+        if not tgt:
+            return "기존: -"
+        return f'기존: <a class="ev-link" href="ai_coop.html#{_esc(tgt.get("id"))}" title="대시보드에서 이 사건 보기">{ev_line(tgt)}</a>'
     def _diff_line(d: dict) -> str:   # 한 줄 요약: '형태 확정계약 → MOU·의향', '금액(억 달러) 80.0 → 값 삭제 권장', '사건 삭제 권장'
         if d.get("field") == "is_event":
             return "사건 삭제 권장"
@@ -347,7 +359,7 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                     meta = f'{what} · conf {_esc(p.get("confidence"))}'
                 else:
                     title = f'재검토: {_esc(p.get("target_title"))}'
-                    meta = "변경 제안: " + (" · ".join(_diff_line(d) for d in pl.get("diffs", [])) or "없음")
+                    meta = ""   # 표와 중복이라 비움 (연구자 지시 2026-10-23)
                 rec = []
                 if pl.get("new_event"):
                     rec.append(f'<p>후속 사건 추가: <b>{_esc(pl["new_event"].get("title"))}</b> — {ev_line(pl["new_event"])}</p>')
@@ -360,21 +372,21 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                     rec.append(f'<table><thead><tr><th>항목</th><th>기존 판단</th><th>모델 판단</th><th>기사 근거</th></tr></thead><tbody>{rows}</tbody></table>')
                 if ex:
                     body = (f'<div class="explain"><p><b>1. 왜 다시 보나</b><br>{_esc(ex.get("reason")) or "—"}</p>'
-                            f'<p><b>2. 기존 코딩 ↔ 검색 결과</b><br>기존: {ev_line(tgt) if tgt else "-"}<br>검색: {_esc(ex.get("found")) or "—"}</p>'
+                            f'<p><b>2. 기존 코딩 ↔ 검색 결과</b><br>{ev_link(tgt)}<br>검색: {_esc(ex.get("found")) or "—"}</p>'
                             f'<p><b>3. 권장 수정안</b><br>{_esc(ex.get("recommendation")) or "—"}</p>{"".join(rec)}</div>')
                 else:  # 2026-10-23 이전 방식으로 만들어진 제안(설명 세 부분 없음)
                     if pl.get("diffs"):
                         rows = "".join(f'<tr><td>{_lab(d.get("field"))}</td><td>{_old(d.get("old"))}</td><td>{_new(d.get("new"), d.get("field"))}</td></tr>' for d in pl["diffs"])
                         rec = [f'<table><thead><tr><th>항목</th><th>기존 판단</th><th>모델 판단</th></tr></thead><tbody>{rows}</tbody></table>']
-                    body = f'<p>기존: {ev_line(tgt) if tgt else "-"}</p>{"".join(rec)}<p class="note">모델 메모: {_esc(p.get("note"))}</p>'
+                    body = f'<p>{ev_link(tgt)}</p>{"".join(rec)}<p class="note">모델 메모: {_esc(p.get("note"))}</p>'
             cards.append(card(p, title, meta, body))
         toggle = '<button class="btn small open-all" type="button">모두 열기</button>' if cards else ''
         sections.append(f'<section class="section rsec"><div class="wrap"><div class="rsec-head"><span class="eyebrow">{k}. {titles[k]} ({len(items)}건)</span>{toggle}</div>'
                         + ("".join(cards) if cards else '<div class="empty">없음</div>') + '</div></section>')
-    howto = ('<section class="section"><div class="wrap"><details><summary>제출 방법</summary><p class="note">'
+    howto = ('<div class="wrap howto"><details><summary>제출 방법</summary><p class="note">'
              '카드마다 승인·기각·보류를 고르고, 고칠 내용이 있으면 의견란에 적습니다. "GitHub으로 제출"을 누르면 내용이 채워진 GitHub Issue 화면이 열리고, 거기서 등록 버튼만 누르면 됩니다(GitHub 로그인 필요). '
              '다음 날 06:00 자동 실행이 반영합니다. 승인은 그대로, 의견에 수정 지시가 있으면 고쳐서 반영하고, 기각은 기록만 남깁니다. 선택하지 않은 항목은 이월 및 축적됩니다. '
-             '선택은 이 브라우저에 임시 저장됩니다.</p></details></div></section>')
+             '선택은 이 브라우저에 임시 저장됩니다.</p></details></div>')
     submit_bar = ('<div class="submit-bar"><span id="decided-count">선택 0건</span><span class="hint">제출하면 선택이 초기화됩니다</span>'
                   '<span><button class="btn" id="clear-decisions" type="button">초기화</button> '
                   '<button class="btn solid" id="submit-decisions" type="button">GitHub으로 제출</button></span></div>')
