@@ -344,10 +344,16 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                 if pl.get("diffs"):
                     rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_esc(d.get("old"))}</td><td>{_esc(d.get("new"))}</td><td class="small">{_esc(d.get("reason"))}</td></tr>' for d in pl["diffs"])
                     rec.append(f'<table><thead><tr><th>필드</th><th>기존(연구자)</th><th>권장</th><th>기사 근거</th></tr></thead><tbody>{rows}</tbody></table>')
-                legacy = "" if ex else f'<p class="note">모델 메모(2026-10-23 이전 형식): {_esc(p.get("note"))}</p>'
-                body = (f'<div class="explain"><p><b>1. 왜 다시 보나</b><br>{_esc(ex.get("reason")) or "—"}</p>'
-                        f'<p><b>2. 기존 코딩 ↔ 검색 결과</b><br>기존: {ev_line(tgt) if tgt else "-"}<br>검색: {_esc(ex.get("found")) or "—"}</p>'
-                        f'<p><b>3. 권장 수정안</b><br>{_esc(ex.get("recommendation")) or "—"}</p>{"".join(rec)}</div>{legacy}')
+                if ex:
+                    body = (f'<div class="explain"><p><b>1. 왜 다시 보나</b><br>{_esc(ex.get("reason")) or "—"}</p>'
+                            f'<p><b>2. 기존 코딩 ↔ 검색 결과</b><br>기존: {ev_line(tgt) if tgt else "-"}<br>검색: {_esc(ex.get("found")) or "—"}</p>'
+                            f'<p><b>3. 권장 수정안</b><br>{_esc(ex.get("recommendation")) or "—"}</p>{"".join(rec)}</div>')
+                else:  # 2026-10-23 이전 방식(원 기사 재코딩)으로 만들어진 제안. 새 기사 없이 해석 차이로 낸 것일 수 있다
+                    if pl.get("diffs"):
+                        rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_esc(d.get("old"))}</td><td>{_esc(d.get("new"))}</td></tr>' for d in pl["diffs"])
+                        rec = [f'<table><thead><tr><th>필드</th><th>기존(연구자)</th><th>모델</th></tr></thead><tbody>{rows}</tbody></table>']
+                    body = (f'<p class="small">이전 방식의 제안(원 기사를 다시 코딩해 차이를 냄 · 새 기사 없음). 해석 차이뿐이면 기각해도 된다.</p>'
+                            f'<p>기존: {ev_line(tgt) if tgt else "-"}</p>{"".join(rec)}<p class="note">모델 메모: {_esc(p.get("note"))}</p>')
             cards.append(card(p, title, meta, body))
         toggle = '<button class="btn small open-all" type="button">모두 열기</button>' if cards else ''
         sections.append(f'<section class="section rsec"><div class="wrap"><div class="rsec-head"><span class="eyebrow">{k}. {titles[k]} ({len(items)}건)</span>{toggle}</div>'
@@ -399,7 +405,8 @@ def build(out: Path) -> bool:
                                                  ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (out / "ai_coop.html").write_text(render(agg, {"fetched_at": meta["as_of"]}), encoding="utf-8")
     props = pending_proposals()
-    (out / "review.html").write_text(render_review(props, {e["id"]: e for e in events}), encoding="utf-8")
+    raw_by_id = {e["id"]: e for e in json.loads(EVENTS.read_text(encoding="utf-8")).get("events", [])} if EVENTS.is_file() else {}
+    (out / "review.html").write_text(render_review(props, raw_by_id), encoding="utf-8")   # 원 레코드(track·sectors) 기준
     (out / "review.json").write_text(json.dumps({"pending": len(props), "by_task": {k: sum(1 for p in props if p["task"] == k) for k in "ABC"}}, ensure_ascii=False), encoding="utf-8")
     print(f"[ai_coop_site] 사건 {agg['n']}건 (확정 {agg['status'].get('confirmed', 0)}, 자동 {agg['status'].get('auto', 0)})")
     return agg["n"] > 0

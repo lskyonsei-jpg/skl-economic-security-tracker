@@ -25,7 +25,7 @@ import re
 import stat
 import sys
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -384,7 +384,11 @@ def fetch_incremental(api_key: str, since: str, end_date: str) -> list[dict]:
     찍으면 이 필터에 안 걸린다. 2022년 이전 건은 last_updated가 발표일과
     정확히 일치하는 비율이 99%라 그럴 가능성이 있다. 전체 점검이 그 안전망이다.
     """
-    rows = fetch_pages(api_key, {"update_period": [since, end_date]}, "변경된 건")
+    # 끝날은 하루 뒤까지 넣는다. 2026-10-23 예약 실행이 UTC 날짜 기준 [10-22, 10-22] 하루 창으로 0건을 받았는데,
+    # GTA 쪽에는 10-22 갱신분이 있었다. 범위 끝이 배타적일 가능성에 대비한 안전장치이며, 미래 날짜라 더 받을 것은 없다.
+    until = (date.fromisoformat(end_date) + timedelta(days=1)).isoformat()
+    say(f"    조회 창 last_updated {since} ~ {until}")
+    rows = fetch_pages(api_key, {"update_period": [since, until]}, "변경된 건")
     merged = {int(row["intervention_id"]): row for row in rows}
     if len(merged) != len(rows):
         say(f"    중복 제거: {len(rows):,} -> {len(merged):,}건")
