@@ -369,3 +369,7 @@ a.org { border-bottom: 1px dotted var(--muted); }
 .subnav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
 .subnav a:hover { text-decoration: none; color: var(--ink); }
 .subnav + .last-update { padding-top: 14px; }
+/* 판단 대기 카드 — B·C 설명 세 부분 (2026-10-23) */
+.rcard .explain p { margin: 10px 0 0; }
+.rcard .explain p > b { color: var(--title); }
+.rcard .explain table { margin-top: 10px; }

@@ -5,8 +5,8 @@
 
 세 절
   A. 새 사건 후보   RSS 질의(최근 2일) → 기관 마스터로 1차 필터 → Task A 코딩 → 제안
-  B. 기존 사건 갱신 열린 사건(announced/in_progress)마다 후속 기사 검색 → 관계 판정(same_event/follow_up/correction/lifecycle) → 제안
-  C. 기존 판단 재검토 확정 사건을 하루 몇 건씩 다시 코딩해 form/track/금액이 다르면 모델 근거와 함께 제안
+  B·C. 기존 사건 점검  확정 사건 전부를 매일 검색 → 처음 보는 기사만 모델이 기존 레코드와 비교 → 후속·진행 상태 변화면 B(갱신),
+                      기사의 사실이 기존 코딩과 다르면 C(재검토). 설명은 세 부분(왜 다시 보나 / 기존 ↔ 검색 결과 / 권장 수정안). (2026-10-23)
 
 제안 id: A-YYYYMMDD-nn, B-…, C-…. 승인된 A 는 사건 추가(status=confirmed, coded_by=model, approved_by=researcher),
 B 는 후속 사건 추가 또는 필드 갱신·lifecycle 변경, C 는 필드 갱신. 모든 반영은 updates[] 에 근거와 함께 남는다.
@@ -37,11 +37,7 @@ STATE = DATA / "ai_coop_state.json"
 EVENTS = cc.EVENTS
 MAX_DAILY_CALLS = int(os.environ.get("AI_COOP_MAX_DAILY_CALLS", "60"))
 MAX_A_ARTICLES = 20      # 하루 Task A 코딩 상한
-MAX_B_EVENTS = 8         # 하루 Task B 점검 사건 수
-MAX_B_ARTICLES_PER_EVENT = 2
-MAX_C_EVENTS = 6         # 하루 Task C 재코딩 사건 수
-C_RECHECK_DAYS = 120
-B_RECHECK_DAYS = 7
+MAX_FOLLOWUP_ARTICLES_PER_EVENT = 2   # 기존 사건 하나당 하루에 모델에 넘기는 새 기사 수 (검색은 사건 전부, 매일)
 DECISIONS = DATA / "ai_coop_decisions.csv"
 
 # 탐지 질의. 한국어는 Google News(KR), 영어는 Google News(US)·Bing.
@@ -57,8 +53,10 @@ QUERIES_EN = ["Korea AI partnership", "Samsung Nvidia", "SK hynix Nvidia", "Hyun
 
 def load_state() -> dict:
     if STATE.is_file():
-        return json.loads(STATE.read_text(encoding="utf-8"))
-    return {"seen": {}, "checked_b": {}, "checked_c": {}, "proposals": [], "counter": {}}
+        state = json.loads(STATE.read_text(encoding="utf-8"))
+        state.setdefault("checked", {})   # 2026-10-23 B·C 통합: 사건별 {date, since}. 옛 checked_b/checked_c 는 그대로 둔다
+        return state
+    return {"seen": {}, "checked": {}, "proposals": [], "counter": {}}
 
 
 def save_state(state: dict) -> None:
@@ -278,25 +276,45 @@ def find_similar(events: list[dict], ev: dict, days: int = 10) -> dict | None:
     return best
 
 
-# ------------------------------------------------------------------ Task B
+# ------------------------------------------------------------------ 기존 사건 점검 — Task B·C 공통 (연구자 결정 2026-10-23)
+# 기존 사건 전부를 매일 검색한다(검색은 모델 호출이 아니다). 처음 보는 기사가 있을 때만 모델이 기존 레코드와 기사의 관계를
+# 판정하고, 그 결과로 B(갱신: 후속 거래·진행 상태 변화)와 C(재검토: 기사의 사실이 기존 코딩과 다름)로 나뉜다.
+# 예전처럼 원 기사를 다시 코딩해 해석 차이로 기존 값을 뒤집자고 하는 일(구 Task C)은 하지 않는다.
 
 
-B_SYSTEM = """당신은 한미 AI 협력 사건 데이터베이스의 갱신 보조자다. 기존 사건 레코드 하나와 새 기사 하나를 받아 둘의 관계를 판정한다. 기사에 없는 사실을 만들지 않는다. 기존 레코드의 값을 바꾸자고 제안할 때는 기사의 근거 문장을 evidence 에 그대로 인용한다.
+FOLLOW_SYSTEM = """당신은 한미 AI 협력 사건 데이터베이스의 점검 보조자다. 연구자가 확정한 기존 사건 레코드 하나와, 그 사건에 대해 새로 검색된 기사 하나를 받는다. 기사에 없는 사실을 만들지 않는다.
 
-[관계]
+기존 코딩은 연구자가 확정한 것이다. 바꾸자고 제안하는 것은 기사에 명시된 사실이 기존 값과 다를 때뿐이며, 그때는 근거 문장을 그대로 인용한다. 같은 사실을 다르게 해석할 여지(예: 금액의 범위를 총액으로 볼지 한쪽 출자분으로 볼지)만으로는 correction 을 내지 않는다. 그런 경우는 relation 을 same_event 로 두고 found 에 두 해석을 적는다.
+
+[관계 — 하나만 고른다]
 - unrelated: 다른 사건이거나 관련이 없다.
-- same_event: 같은 사건의 추가 보도(새 사실 없음). 출처만 추가한다.
-- follow_up: 같은 거래의 다음 단계(MOU → 확정계약 → 집행 등). new_event 에 새 사건을 채운다.
-- correction: 기존 레코드의 사실(금액·날짜·주체·형태)이 기사와 다르다. updates 에 field/old/new/evidence.
-- lifecycle: 완료·취소·지연·규모 변경·관계 종료. lifecycle 에 completed/cancelled/delayed/superseded/in_progress 중 하나.
+- same_event: 같은 사건의 추가 보도. 새 사실이 없다.
+- follow_up: 같은 거래의 다음 단계(MOU → 확정계약 → 집행, 추가 투자, 후속 계약). new_event 에 새 사건을 채운다. 연구자에게는 "갱신"으로 보인다.
+- lifecycle: 완료·취소·지연·규모 변경·관계 종료 등 진행 상태의 변화. lifecycle 에 하나를 적는다. 연구자에게는 "갱신"으로 보인다.
+- correction: 기존 레코드의 사실(금액·날짜·주체·형태·track·분야)이 기사와 다르다. updates 에 field/old/new/evidence 를 적는다. 연구자에게는 "재검토"로 보인다.
 
-[form·track·금액 규칙] 확정계약은 구속력 문서(계약 체결·인수·지분 취득·합작·장기 공급·라이선스·협약 체결)가 명시된 것, MOU·의향은 비구속 문서이거나 문서가 특정되지 않은 발표, 집행은 앞선 거래의 이행·완료, 선언은 정부 성명·회담·투자 계획. track 은 정부-정부/정부-민간/민간-민간. 금액은 거래금액만(억 달러).
+[설명 세 부분 — 연구자가 읽는 글이다. 각각 2~3문장의 완결된 문장으로 쓴다]
+- reason: 왜 이 사건을 다시 보게 됐는가. 어떤 기사가 새로 나왔고, 기존 코딩의 어느 부분과 관계되는가.
+- found: 검색된 기사가 말하는 사실. 기존 레코드와 같은 점과 다른 점을 구분하고, 다른 점은 기사 문장을 인용한다.
+- recommendation: 권장 수정안. 어느 필드를 무엇에서 무엇으로 바꿀지, 또는 후속 사건을 추가할지, 진행 상태를 무엇으로 바꿀지와 그 이유. 바꿀 것이 없으면 "수정 불필요"와 이유.
+
+[form·track·금액 규칙 — 코딩 규칙과 같다]
+- 확정계약: 구속력 있는 문서(계약 체결·인수·지분 취득·합작법인 설립·장기 공급·라이선스·협약 체결)가 명시된 것. 금액이 없어도 인정한다.
+- MOU·의향: 비구속 문서(MOU·LOI·업무협약·양해각서·기본합의)이거나 문서 종류가 특정되지 않은 협력 발표.
+- 집행: 앞선 구속력 거래의 이행·완료(인수 완료, 양산 개시, 착공 등).
+- 선언: 정부 공동성명·회담·협의체 출범, 계약 상대가 없는 투자 계획 발표.
+- 형태는 발표 시점의 성격이므로 후속 진행을 이유로 바꾸지 않는다. 진행은 lifecycle 이 맡는다.
+- track: 정부-정부 / 정부-민간 / 민간-민간. 당사자만 보고 판정한다.
+- amount_usd_bn: 거래금액만, 억 달러. 기업가치·패키지 총액·투자 계획 총액은 금액이 아니다.
 """
 
-B_SCHEMA = {
+FOLLOW_SCHEMA = {
     "type": "object",
     "properties": {
-        "relation": {"type": "string", "enum": ["unrelated", "same_event", "follow_up", "correction", "lifecycle"]},
+        "relation": {"type": "string", "enum": ["unrelated", "same_event", "follow_up", "lifecycle", "correction"]},
+        "reason": {"type": "string"},
+        "found": {"type": "string"},
+        "recommendation": {"type": "string"},
         "new_event": {"anyOf": [cc.EVENT_SCHEMA, {"type": "null"}]},
         "updates": {"type": "array", "items": {"type": "object", "properties": {
             "field": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}, "evidence": {"type": "string"}},
@@ -304,22 +322,23 @@ B_SCHEMA = {
         "lifecycle": {"anyOf": [{"type": "string", "enum": ["announced", "in_progress", "completed", "cancelled", "delayed", "superseded"]}, {"type": "null"}]},
         "evidence": {"type": "string"},
         "confidence": {"type": "number"},
-        "note": {"type": "string"},
     },
-    "required": ["relation", "new_event", "updates", "lifecycle", "evidence", "confidence", "note"],
+    "required": ["relation", "reason", "found", "recommendation", "new_event", "updates", "lifecycle", "evidence", "confidence"],
     "additionalProperties": False,
 }
 
 
-def classify_relation(client, event: dict, meta: dict, body: str) -> tuple[dict, dict]:
-    record = {k: event.get(k) for k in ("id", "date", "us_parties", "kr_parties", "track", "form", "sectors", "title", "amount_usd_bn", "lifecycle")}
-    user = (f"[기존 사건]\n{json.dumps(record, ensure_ascii=False)}\n\n[새 기사]\nURL: {meta.get('url', '')}\n게재일(참고): {meta.get('published', '')}\n"
-            f"제목: {meta.get('title', '')}\n\n[본문]\n{body}")
+def classify_follow(client, event: dict, meta: dict, body: str) -> tuple[dict, dict]:
+    """기존 레코드 + 새 기사 → 관계 판정과 설명 세 부분."""
+    record = {k: event.get(k) for k in ("id", "date", "title", "us_parties", "kr_parties", "track", "form", "sectors", "amount_usd_bn", "lifecycle", "summary")}
+    record["note"] = (event.get("note") or "")[:300]
+    user = (f"[기존 사건 — 연구자 확정 코딩]\n{json.dumps(record, ensure_ascii=False)}\n\n[새로 검색된 기사]\nURL: {meta.get('url', '')}\n"
+            f"게재일(참고): {meta.get('published', '')}\n제목: {meta.get('title', '')}\n\n[본문]\n{body}")
     response = client.messages.create(
         model=cc.MODEL, max_tokens=8000,
-        system=[{"type": "text", "text": B_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+        system=[{"type": "text", "text": FOLLOW_SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
-        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": B_SCHEMA}},
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": FOLLOW_SCHEMA}},
     )
     usage = {"input": response.usage.input_tokens, "output": response.usage.output_tokens}
     if response.stop_reason in ("refusal", "max_tokens"):
@@ -328,56 +347,69 @@ def classify_relation(client, event: dict, meta: dict, body: str) -> tuple[dict,
     return json.loads(text), usage
 
 
-def task_b(client, state: dict, events: list[dict], budget: Budget, today: str) -> list[dict]:
-    open_events = [e for e in events if e.get("status") == "confirmed" and e.get("lifecycle") in (None, "", "announced", "in_progress")]
-    def due(e):
-        last = state["checked_b"].get(e["id"])
-        return last is None or (dt.date.fromisoformat(today) - dt.date.fromisoformat(last)).days >= B_RECHECK_DAYS
-    queue = sorted([e for e in open_events if due(e)], key=lambda e: (state["checked_b"].get(e["id"], "0000-00-00"), e["date"]))[:MAX_B_EVENTS]
-    print(f"[B] 열린 사건 {len(open_events)}건, 오늘 점검 {len(queue)}건")
-    proposals = []
-    for e in queue:
-        state["checked_b"][e["id"]] = today
-        since = state["checked_b"].get(e["id"] + ":since") or e["date"]
-        query = " ".join(e["us_parties"][:2] + e["kr_parties"][:2]) + " " + re.sub(r"[()（）–—,·]", " ", e["title"])[:40]
-        cands = _search_since(query, since)
-        n = 0
-        for c in cands:
-            if n >= MAX_B_ARTICLES_PER_EVENT or not budget.ok():
-                break
-            url = cc._decode_gnews(c["link"]) if c["engine"] == "google" else c["link"]
-            if not url or url in state["seen"] or any(d in url for d in cc.PAYWALL_DOMAINS) or url == (e["sources"] or [{}])[0].get("url"):
-                continue
-            body, meta = cc.fetch_body(url)
-            if len(body) < 300:
-                continue
-            state["seen"][url] = today
-            meta["url"] = url
-            try:
-                rel, _ = classify_relation(client, e, meta, cc.clip(body))
-            except Exception as exc:  # noqa: BLE001
-                print(f"  [B 오류] {e['title'][:30]} — {str(exc)[:100]}"); continue
-            budget.spend(); n += 1
-            if rel["relation"] in ("unrelated", "same_event"):
-                continue
-            if rel.get("new_event"):
-                ne = rel["new_event"]
-                ne["us_parties"], _ = cc.canonical_parties(ne.get("us_parties", []))
-                ne["kr_parties"], _ = cc.canonical_parties(ne.get("kr_parties", []))
-            proposals.append({
-                "id": new_id(state, "B", today), "task": "B", "created": today, "status": "proposed",
-                "target_id": e["id"], "target_title": e["title"], "relation": rel["relation"],
-                "payload": {"new_event": rel.get("new_event"), "updates": rel.get("updates", []), "lifecycle": rel.get("lifecycle")},
-                "confidence": rel.get("confidence"), "note": rel.get("note", ""),
-                "evidence": {"url": url, "excerpt": rel.get("evidence", "")[:500] or body[:500],
-                             "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(), "chars": len(body)},
-            })
-        state["checked_b"][e["id"] + ":since"] = today
-    return proposals
+def _record_line(e: dict) -> str:
+    return (f"{e.get('date')} · {e.get('form')} · {e.get('track')} · {', '.join(e.get('sectors') or [])} · "
+            f"금액 {e.get('amount_usd_bn')} · 진행 {e.get('lifecycle') or 'announced'}")
+
+
+def _coerce(field: str, value):
+    """모델 출력은 문자열이다. 숫자 필드는 숫자로 되돌린다."""
+    if field in ("amount_usd_bn", "amount_krw_bn", "confidence"):
+        try:
+            return None if value in (None, "", "null", "None") else float(value)
+        except (TypeError, ValueError):
+            return value
+    if field == "sectors" and isinstance(value, str):
+        return [s.strip() for s in re.split(r"[,、·/]", value) if s.strip()]
+    return value
+
+
+def _already_pending(state: dict, target_id: str, task: str) -> bool:
+    return any(q["status"] == "proposed" and q["task"] == task and q.get("target_id") == target_id for q in state["proposals"])
+
+
+def _followup_proposal(state: dict, e: dict, rel: dict, url: str, body: str, today: str) -> dict | None:
+    """관계 판정 결과를 B(갱신) 또는 C(재검토) 제안으로 만든다. 설명 세 부분(explain)을 함께 담는다."""
+    relation = rel.get("relation")
+    if relation in ("unrelated", "same_event"):
+        return None
+    explain = {"reason": rel.get("reason", ""), "existing": _record_line(e), "found": rel.get("found", ""),
+               "recommendation": rel.get("recommendation", "")}
+    evidence = {"url": url, "excerpt": (rel.get("evidence") or "")[:500] or body[:500],
+                "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(), "chars": len(body)}
+    base = {"created": today, "status": "proposed", "target_id": e["id"], "target_title": e["title"], "relation": relation,
+            "explain": explain, "confidence": rel.get("confidence"), "note": rel.get("recommendation", ""), "evidence": evidence}
+    if relation == "correction":
+        diffs = [{"field": u["field"], "old": e.get(u["field"], u.get("old")), "new": _coerce(u["field"], u["new"]), "reason": u.get("evidence", "")}
+                 for u in rel.get("updates", []) if u.get("field")]
+        diffs = [d for d in diffs if str(d["old"]) != str(d["new"])]
+        if not diffs or _already_pending(state, e["id"], "C"):
+            return None
+        return dict(base, id=new_id(state, "C", today), task="C", payload={"diffs": diffs, "model_event": None})
+    new_event = rel.get("new_event") if relation == "follow_up" else None
+    if new_event:
+        new_event["us_parties"], _ = cc.canonical_parties(new_event.get("us_parties", []))
+        new_event["kr_parties"], _ = cc.canonical_parties(new_event.get("kr_parties", []))
+    lifecycle = rel.get("lifecycle") if relation == "lifecycle" else None
+    if lifecycle and lifecycle == (e.get("lifecycle") or "announced"):
+        lifecycle = None
+    if not new_event and not lifecycle:
+        return None
+    if _already_pending(state, e["id"], "B"):
+        return None
+    return dict(base, id=new_id(state, "B", today), task="B", payload={"new_event": new_event, "updates": [], "lifecycle": lifecycle})
+
+
+def _since_for(state: dict, e: dict) -> str:
+    rec = state["checked"].get(e["id"])
+    if rec and rec.get("since"):
+        return rec["since"]
+    legacy = state.get("checked_b", {}).get(e["id"] + ":since")   # 2026-10-23 이전 상태 파일
+    return legacy or e["date"]
 
 
 def _search_since(query: str, since: str) -> list[dict]:
-    """사건일(또는 마지막 점검일) 이후의 후속 기사 후보."""
+    """사건일(또는 마지막 점검일) 이후의 후속 기사 후보. Google News 한국어·영어."""
     out = []
     q = re.sub(r"[\"'()\[\]–—·,]", " ", query)
     out += [dict(x, engine="google") for x in _rss("https://news.google.com/rss/search", {"q": f"{q} after:{since}", "hl": "ko", "gl": "KR", "ceid": "KR:ko"})[:6]]
@@ -385,52 +417,49 @@ def _search_since(query: str, since: str) -> list[dict]:
     return out
 
 
-# ------------------------------------------------------------------ Task C
-
-
-def task_c(client, system: str, state: dict, events: list[dict], budget: Budget, today: str) -> list[dict]:
-    def due(e):
-        last = state["checked_c"].get(e["id"])
-        return last is None or (dt.date.fromisoformat(today) - dt.date.fromisoformat(last)).days >= C_RECHECK_DAYS
-    queue = [e for e in events if e.get("status") == "confirmed" and e.get("sources") and due(e)]
-    queue = sorted(queue, key=lambda e: (state["checked_c"].get(e["id"], "0000-00-00"), e["date"]))[:MAX_C_EVENTS]
-    print(f"[C] 재검토 대상 {len(queue)}건")
-    proposals = []
-    for e in queue:
-        if not budget.ok():
-            break
-        state["checked_c"][e["id"]] = today
-        inp = cc.resolve_input(e["title"], e["date"], e["sources"][0]["url"])
-        if inp["kind"] == "title":
-            continue  # 본문 없이 기존 판단을 뒤집자고 하지 않는다
-        meta = dict(inp.get("meta") or {}); meta["url"] = inp["url"]
-        try:
-            pred, _ = cc.code_article(client, system, meta, cc.clip(inp["text"]), "medium")
-        except Exception as exc:  # noqa: BLE001
-            print(f"  [C 오류] {e['title'][:30]} — {str(exc)[:100]}"); continue
-        budget.spend()
-        evs = pred.get("events") or []
-        for ev in evs:
-            ev["us_parties"], _ = cc.canonical_parties(ev.get("us_parties", []))
-            ev["kr_parties"], _ = cc.canonical_parties(ev.get("kr_parties", []))
-        if not evs:
-            diffs = [{"field": "is_event", "old": "사건", "new": "사건 아님", "reason": pred.get("article_note", "")}]
-            best = {}
-        else:
-            best = max(evs, key=lambda ev: cc.jaccard(ev.get("us_parties", []), e["us_parties"]) + cc.jaccard(ev.get("kr_parties", []), e["kr_parties"]) + (0.5 if ev.get("form") == e["form"] else 0))
-            diffs = []
-            for field in ("form", "track"):
-                if best.get(field) and best.get(field) != e.get(field):
-                    diffs.append({"field": field, "old": e.get(field), "new": best.get(field), "reason": best.get("note", "")})
-            if best.get("amount_usd_bn") != e.get("amount_usd_bn") and (best.get("amount_usd_bn") is not None or e.get("amount_usd_bn") is not None):
-                diffs.append({"field": "amount_usd_bn", "old": e.get("amount_usd_bn"), "new": best.get("amount_usd_bn"), "reason": best.get("note", "")})
-        if diffs:
-            proposals.append({
-                "id": new_id(state, "C", today), "task": "C", "created": today, "status": "proposed",
-                "target_id": e["id"], "target_title": e["title"], "payload": {"diffs": diffs, "model_event": best},
-                "confidence": best.get("confidence"), "note": best.get("note", "") or pred.get("article_note", ""),
-                "evidence": {"url": inp["url"], "via": inp["via"], "chars": inp["chars"], "sha256": inp["sha256"], "excerpt": inp["text"][:500]},
-            })
+def task_followup(client, state: dict, events: list[dict], budget: Budget, today: str) -> list[dict]:
+    """기존 사건 전부를 검색하고, 처음 보는 기사가 있는 사건만 모델로 판정한다. 결과는 B(갱신) 또는 C(재검토)."""
+    targets = [e for e in events if e.get("status") == "confirmed"]
+    targets.sort(key=lambda e: (state["checked"].get(e["id"], {}).get("date", "0000-00-00"), e["date"]))
+    print(f"[B·C] 기존 사건 {len(targets)}건 검색")
+    proposals: list[dict] = []
+    overlap_since = (dt.date.fromisoformat(today) - dt.timedelta(days=1)).isoformat()
+    stats = {"searched": 0, "articles": 0, "judged": 0}
+    for e in targets:
+        since = _since_for(state, e)
+        query = " ".join(e["us_parties"][:2] + e["kr_parties"][:2]) + " " + re.sub(r"[()（）–—,·]", " ", e["title"])[:40]
+        cands = _search_since(query, since)
+        stats["searched"] += 1
+        time.sleep(0.3)
+        n, stopped = 0, False
+        for c in cands:
+            if n >= MAX_FOLLOWUP_ARTICLES_PER_EVENT:
+                break
+            if not budget.ok():
+                stopped = True
+                break
+            url = cc._decode_gnews(c["link"]) if c["engine"] == "google" else c["link"]
+            if not url or url in state["seen"] or any(d in url for d in cc.PAYWALL_DOMAINS) or url == (e.get("sources") or [{}])[0].get("url"):
+                continue
+            body, meta = cc.fetch_body(url)
+            if len(body) < 300:
+                continue
+            state["seen"][url] = today
+            stats["articles"] += 1
+            meta["url"] = url
+            try:
+                rel, _ = classify_follow(client, e, meta, cc.clip(body))
+            except Exception as exc:  # noqa: BLE001 — 한 기사 실패가 하루를 멈추지 않게
+                print(f"  [B·C 오류] {e['title'][:30]} — {str(exc)[:100]}"); continue
+            budget.spend(); n += 1; stats["judged"] += 1
+            p = _followup_proposal(state, e, rel, url, body, today)
+            if p:
+                proposals.append(p)
+                print(f"  [{p['task']}] {e['title'][:30]} — {rel.get('relation')}")
+        if stopped:
+            print("  호출 상한 — 나머지 사건은 내일"); break
+        state["checked"][e["id"]] = {"date": today, "since": overlap_since}
+    print(f"[B·C] 검색 {stats['searched']}건 · 새 기사 {stats['articles']}건 · 판정 {stats['judged']}회 · 제안 B {sum(p['task']=='B' for p in proposals)} / C {sum(p['task']=='C' for p in proposals)}")
     return proposals
 
 
@@ -668,8 +697,7 @@ def cmd_daily(today: str) -> int:
     props = []
     props += task_a(client, system, state, events, budget, today)
     stats["coded_a"] = sum(1 for _ in props)
-    props += task_b(client, state, events, budget, today)
-    props += task_c(client, system, state, events, budget, today)
+    props += task_followup(client, state, events, budget, today)
     state["proposals"] += props
     save_state(state)
     body = render_judgment(today, props, budget, stats)

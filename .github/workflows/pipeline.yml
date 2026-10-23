@@ -128,10 +128,11 @@ jobs:
           GTA_API_KEY: ${{ secrets.GTA_API_KEY }}
         run: |
           set +e
-          python auto_update.py --mode ${{ needs.plan.outputs.mode }} --yes
-          RC=$?
+          python auto_update.py --mode ${{ needs.plan.outputs.mode }} --yes 2>&1 | tee gta_run.log
+          RC=${PIPESTATUS[0]}
           set -e
           if [ "$RC" = "3" ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; echo "변경 없음";
+            { echo "## 패널 1 — GTA 변경 없음 (보관함·자료 기준일 유지)"; grep -E "직전 업데이트|이번 종료일|변경된 건|변경분|새로 들어온 것|수정 " gta_run.log | head -8 | sed 's/^ */- /'; echo; } >> "$GITHUB_STEP_SUMMARY";
           elif [ "$RC" = "0" ]; then echo "changed=true" >> "$GITHUB_OUTPUT";
           else echo "auto_update.py 종료코드 $RC"; exit $RC; fi
       - name: 기준자료 수집 (BSV·IMF DOTS·WDI)

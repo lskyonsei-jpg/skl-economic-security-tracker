@@ -325,25 +325,29 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                 title, meta = _esc(ev.get("title")), ev_line(ev)
                 body = (f'<p>미국 측 {_esc(", ".join(disp(x) for x in ev.get("us_parties", [])))} / 한국 측 {_esc(", ".join(disp(x) for x in ev.get("kr_parties", [])))}</p>'
                         f'<p>{_esc(ev.get("summary"))}</p><p class="note">모델 메모: {_esc(ev.get("note"))}</p>{extra}')
-            elif k == "B":
-                pl = p["payload"]; tgt = events_by_id.get(p.get("target_id"), {})
-                title, meta = f'갱신: {_esc(p.get("target_title"))}', f'관계 {_esc(p.get("relation"))} · conf {_esc(p.get("confidence"))}'
-                parts = [f'<p>기존: {ev_line(tgt) if tgt else "-"}</p>']
+            else:  # B 갱신 · C 재검토 — 설명 세 부분(왜 다시 보나 / 기존 ↔ 검색 결과 / 권장 수정안). 2026-10-23
+                pl = p["payload"]; tgt = events_by_id.get(p.get("target_id"), {}); ex = p.get("explain") or {}
+                if k == "B":
+                    title = f'갱신: {_esc(p.get("target_title"))}'
+                    what = "후속 사건 추가" if pl.get("new_event") else (f'진행 상태 → {_esc(pl.get("lifecycle"))}' if pl.get("lifecycle") else "필드 갱신")
+                    meta = f'{what} · conf {_esc(p.get("confidence"))}'
+                else:
+                    title = f'재검토: {_esc(p.get("target_title"))}'
+                    meta = " · ".join(f'{_esc(d.get("field"))} {_esc(d.get("old"))} → {_esc(d.get("new"))}' for d in pl.get("diffs", [])) or f'conf {_esc(p.get("confidence"))}'
+                rec = []
                 if pl.get("new_event"):
-                    parts.append(f'<p>후속 사건: {_esc(pl["new_event"].get("title"))} — {ev_line(pl["new_event"])}</p>')
+                    rec.append(f'<p>후속 사건 추가: <b>{_esc(pl["new_event"].get("title"))}</b> — {ev_line(pl["new_event"])}</p>')
                 for u in pl.get("updates", []):
-                    parts.append(f'<p>수정 제안: <b>{_esc(u.get("field"))}</b> {_esc(u.get("old"))} → {_esc(u.get("new"))}<br><span class="small">{_esc(u.get("evidence"))}</span></p>')
+                    rec.append(f'<p><b>{_esc(u.get("field"))}</b> {_esc(u.get("old"))} → {_esc(u.get("new"))}<br><span class="small">{_esc(u.get("evidence"))}</span></p>')
                 if pl.get("lifecycle"):
-                    parts.append(f'<p>진행 상태 → <b>{_esc(pl["lifecycle"])}</b></p>')
-                parts.append(f'<p class="note">모델 메모: {_esc(p.get("note"))}</p>')
-                body = "".join(parts)
-            else:
-                pl = p["payload"]
-                rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_esc(d.get("old"))}</td><td>{_esc(d.get("new"))}</td></tr>' for d in pl.get("diffs", []))
-                title = f'재검토: {_esc(p.get("target_title"))}'
-                meta = " · ".join(f'{_esc(d.get("field"))} {_esc(d.get("old"))} → {_esc(d.get("new"))}' for d in pl.get("diffs", []))
-                body = (f'<table><thead><tr><th>필드</th><th>기존(연구자)</th><th>모델</th></tr></thead><tbody>{rows}</tbody></table>'
-                        f'<p class="note" style="margin-top:8px">모델 근거: {_esc(p.get("note"))}</p>')
+                    rec.append(f'<p>진행 상태: {_esc(tgt.get("lifecycle") or "announced")} → <b>{_esc(pl["lifecycle"])}</b></p>')
+                if pl.get("diffs"):
+                    rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_esc(d.get("old"))}</td><td>{_esc(d.get("new"))}</td><td class="small">{_esc(d.get("reason"))}</td></tr>' for d in pl["diffs"])
+                    rec.append(f'<table><thead><tr><th>필드</th><th>기존(연구자)</th><th>권장</th><th>기사 근거</th></tr></thead><tbody>{rows}</tbody></table>')
+                legacy = "" if ex else f'<p class="note">모델 메모(2026-10-23 이전 형식): {_esc(p.get("note"))}</p>'
+                body = (f'<div class="explain"><p><b>1. 왜 다시 보나</b><br>{_esc(ex.get("reason")) or "—"}</p>'
+                        f'<p><b>2. 기존 코딩 ↔ 검색 결과</b><br>기존: {ev_line(tgt) if tgt else "-"}<br>검색: {_esc(ex.get("found")) or "—"}</p>'
+                        f'<p><b>3. 권장 수정안</b><br>{_esc(ex.get("recommendation")) or "—"}</p>{"".join(rec)}</div>{legacy}')
             cards.append(card(p, title, meta, body))
         toggle = '<button class="btn small open-all" type="button">모두 열기</button>' if cards else ''
         sections.append(f'<section class="section rsec"><div class="wrap"><div class="rsec-head"><span class="eyebrow">{k}. {titles[k]} ({len(items)}건)</span>{toggle}</div>'
