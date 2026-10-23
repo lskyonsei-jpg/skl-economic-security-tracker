@@ -357,3 +357,8 @@ a.org { border-bottom: 1px dotted var(--muted); }
 .submit-bar .btn.solid { background: var(--mint); color: var(--ink); border-color: var(--mint); }
 .submit-bar .hint { color: #c9ccd1; }
 .submit-bar .btn { padding: 8px 18px; }
+/* 패널 제목(2026-10-23 연구자 결정): 라벨(그림 N) + 세리프 제목 2단. 패널 1 두 그림에 적용. */
+.panel-head { align-items: flex-end; }
+.panel-head .panel-title { display: block; margin: 0; font-family: var(--font-title); font-size: 19pt !important; font-weight: 600; line-height: 1.3; letter-spacing: -0.01em; text-transform: none; color: var(--title); }
+.panel-head .panel-title .fig { display: block; margin-bottom: 4px; font-family: var(--font); font-size: 11pt !important; font-weight: 400; letter-spacing: 2.5px; text-transform: uppercase; color: var(--ink-2); }
+.panel-head:has(.panel-title) { padding: 18px 22px 14px; }
