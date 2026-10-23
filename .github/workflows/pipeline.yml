@@ -53,6 +53,7 @@ concurrency:
 env:
   MODEL_REVISION: 2cc47b0c3a1224bd949b6154bb0fd966a864d4df   # auto_update.py 와 같아야 한다
   PYTHONUTF8: "1"
+  TZ: Asia/Seoul   # 실행 서버는 UTC. 날짜(제안 ID·created·빌드 시각)가 한국 기준이 되게 고정 (2026-10-23)
   SITE_URL: https://lskyonsei-jpg.github.io/skl-economic-security-tracker
 
 jobs:
