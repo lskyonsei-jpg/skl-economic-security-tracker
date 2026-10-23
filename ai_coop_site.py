@@ -114,13 +114,26 @@ def aggregate(events: list[dict]) -> dict:
 # ------------------------------------------------------------------ 화면
 
 
+PANEL2_PAGES = ("ai_coop.html", "review.html")  # AI Cooperation 아래 Dashboard · Review
+
+
 def nav(current: str) -> str:
-    links = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"), ("review.html", "Review"),
+    links = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"),
              ("data.html", "Data"), ("codebook.html", "Codebook")]
     cur = ' aria-current="page"'
+    if current in PANEL2_PAGES:
+        current = "ai_coop.html"
     items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in links)
     return (f'<nav class="site-nav"><div class="wrap"><a class="brand" href="index.html">'
             f'<span class="mark"></span>SKL Economic Security Tracker</a><div class="links">{items}</div></div></nav>')
+
+
+def subnav(current: str) -> str:
+    """AI Cooperation 히어로 아래 탭: Dashboard(ai_coop.html) · Review(review.html)."""
+    tabs = [("ai_coop.html", "Dashboard"), ("review.html", "Review")]
+    cur = ' aria-current="page"'
+    items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in tabs)
+    return f'<div class="subnav"><div class="wrap">{items}</div></div>'
 
 
 def with_last_update(body: str, date: str) -> str:
@@ -244,9 +257,9 @@ def _page(title: str, hero_meta: str, body: str, asof: str, built: str) -> str:
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} · SKL</title><link rel="stylesheet" href="site.css"></head>
 <body>{nav("ai_coop.html")}
-<header class="hero"><div class="wrap"><span class="eyebrow">Panel 2</span><h1>{html.escape(title)}</h1>
+<header class="hero"><div class="wrap"><span class="eyebrow">Panel 2 · AI Cooperation</span><h1>{html.escape(title)}</h1>
 {hero_meta}</div></header>
-{with_last_update("</header>", built[:10])[len("</header>"):]}
+{subnav("ai_coop.html")}{with_last_update("</header>", built[:10])[len("</header>"):]}
 {body}
 {footer(asof, built)}
 </body></html>'''
@@ -271,7 +284,7 @@ def _esc(v) -> str:
 def render_review(props: list[dict], events_by_id: dict) -> str:
     built = datetime.now().strftime("%Y-%m-%d %H:%M")
     by_task = {k: [p for p in props if p["task"] == k] for k in ("A", "B", "C")}
-    hero_meta = (f'<div class="meta"><div>대기<b>{len(props)}건</b></div><div>A 새 사건<b>{len(by_task["A"])}</b></div>'
+    hero_meta = (f'<div class="meta"><div>판단 대기<b>{len(props)}건</b></div><div>A 새 사건<b>{len(by_task["A"])}</b></div>'
             f'<div>B 갱신<b>{len(by_task["B"])}</b></div><div>C 재검토<b>{len(by_task["C"])}</b></div></div>')
     def ev_line(ev: dict) -> str:
         return (f'{_esc(ev.get("date"))} · {_esc(ev.get("form"))} · {_esc(ev.get("track"))} · {_esc(", ".join(ev.get("sectors", [])))} · '
@@ -369,7 +382,8 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
 </script>""" % json.dumps(REPO)
     body = "".join(sections) + howto + submit_bar + script
     head = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<title>판단 대기 · SKL</title><link rel="stylesheet" href="site.css"></head>\n'
-    hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Review queue</span><h1>판단 대기</h1></div></header>'
+    hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Panel 2 · AI Cooperation</span><h1>한미 AI 협력 트래커</h1>'
+            + hero_meta + '</div></header>' + subnav("review.html")
             + with_last_update("</header>", built[:10])[len("</header>"):] + '\n')
     return head + "<body>" + nav("review.html") + "\n" + hero + body + "\n" + footer("", built) + "\n</body></html>"
 
