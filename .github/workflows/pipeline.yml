@@ -38,6 +38,10 @@ on:
         description: "끝나면 결과 메일 보내기 (MAIL_USER·MAIL_PASS 필요)"
         type: boolean
         default: false
+      deploy_only:
+        description: "(내부용) 스탬프 커밋 뒤 바로 배포만 — 사람이 켤 일 없음"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -239,15 +243,19 @@ jobs:
             echo "- site: $(find site -type f | wc -l)개 파일, $(du -sh site | cut -f1) / 판단 대기: $(python -c "import json;print(json.load(open('site/review.json'))['pending'])" 2>/dev/null || echo '?')건"
           } >> "$GITHUB_STEP_SUMMARY"
       # GitHub Pages 는 커밋 SHA 를 배포 버전으로 쓴다. 같은 SHA 로 다시 배포하면 "성공"이라고 하면서 옛 내용을 그대로 둔다
-      # (2026-10-23 예약 실행에서 실측). 그래서 마지막 배포와 같은 커밋이면 스탬프 커밋을 하나 만들고 그 커밋으로 배포 실행을 새로 띄운다.
+      # (2026-10-23 예약 실행에서 실측). 그래서 마지막으로 실제 배포된 커밋(보관함의 deployed_sha.txt)과 같으면 스탬프 커밋을 하나
+      # 만들고 그 커밋으로 배포 실행을 새로 띄운다(deploy_only=true). deployments API 는 이 작업 자체의 environment 기록이 먼저 잡혀 못 쓴다.
       - name: 배포 방식 결정
         id: how
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          LAST=$(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=github-pages&per_page=1" --jq '.[0].sha // ""')
-          if [ "$LAST" = "$GITHUB_SHA" ]; then echo "same=true" >> "$GITHUB_OUTPUT"; echo "마지막 배포와 같은 커밋 — 스탬프 커밋으로 재배포";
-          else echo "same=false" >> "$GITHUB_OUTPUT"; fi
+          LAST=$(gh release download state -R "$GITHUB_REPOSITORY" -p deployed_sha.txt -O - 2>/dev/null || true)
+          if [ "${{ github.event.inputs.deploy_only }}" != "true" ] && [ -n "$LAST" ] && [ "$LAST" = "$GITHUB_SHA" ]; then
+            echo "same=true" >> "$GITHUB_OUTPUT"; echo "마지막 배포($LAST)와 같은 커밋 — 스탬프 커밋으로 재배포"
+          else
+            echo "same=false" >> "$GITHUB_OUTPUT"; echo "바로 배포 (마지막 배포: ${LAST:-없음})"
+          fi
       - uses: actions/configure-pages@v5
         if: steps.how.outputs.same != 'true'
       - uses: actions/upload-pages-artifact@v3
@@ -257,6 +265,13 @@ jobs:
       - id: deploy
         if: steps.how.outputs.same != 'true'
         uses: actions/deploy-pages@v4
+      - name: 배포한 커밋 기록
+        if: steps.deploy.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GITHUB_SHA" > deployed_sha.txt
+          gh release upload state deployed_sha.txt -R "$GITHUB_REPOSITORY" --clobber
       - name: 같은 커밋 재배포 — 스탬프 커밋 후 새 실행으로 배포
         if: steps.how.outputs.same == 'true'
         env:
@@ -268,7 +283,7 @@ jobs:
           git add .deploy_stamp
           git commit -q -m "[deploy] $(cat .deploy_stamp) 자료 갱신 배포용 스탬프"
           git push -q origin HEAD:main
-          gh workflow run pipeline.yml --ref main -f mode=skip -f reference=false -f ai_coop=none -f mail=false
+          gh workflow run pipeline.yml --ref main -f mode=skip -f reference=false -f ai_coop=none -f mail=false -f deploy_only=true
           echo "새 커밋 $(git rev-parse --short HEAD) 으로 배포 실행을 띄웠다"
 
       # ---- 정리: 이 실행의 아티팩트만 남기고 지우고, 30일 지난 실행 기록을 지운다. 개별 실패는 경고만.
