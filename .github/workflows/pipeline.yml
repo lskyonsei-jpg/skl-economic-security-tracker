@@ -17,7 +17,7 @@ on:
     - cron: "0 21 * * *"
   push:
     branches: [main]
-    paths: ["**", "!문서/**", "문서/코드북*.md", "!README.md", "!CLAUDE.md"]
+    paths: ["**", "!문서/**", "문서/코드북*.md", "!README.md", "!CLAUDE.md", "!.deploy_stamp"]
   workflow_dispatch:
     inputs:
       mode:
@@ -238,12 +238,38 @@ jobs:
             echo "- 패널 1: ${{ needs.panel1.result }} / 패널 2: ${{ needs.panel2.result }}"
             echo "- site: $(find site -type f | wc -l)개 파일, $(du -sh site | cut -f1) / 판단 대기: $(python -c "import json;print(json.load(open('site/review.json'))['pending'])" 2>/dev/null || echo '?')건"
           } >> "$GITHUB_STEP_SUMMARY"
+      # GitHub Pages 는 커밋 SHA 를 배포 버전으로 쓴다. 같은 SHA 로 다시 배포하면 "성공"이라고 하면서 옛 내용을 그대로 둔다
+      # (2026-10-23 예약 실행에서 실측). 그래서 마지막 배포와 같은 커밋이면 스탬프 커밋을 하나 만들고 그 커밋으로 배포 실행을 새로 띄운다.
+      - name: 배포 방식 결정
+        id: how
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LAST=$(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=github-pages&per_page=1" --jq '.[0].sha // ""')
+          if [ "$LAST" = "$GITHUB_SHA" ]; then echo "same=true" >> "$GITHUB_OUTPUT"; echo "마지막 배포와 같은 커밋 — 스탬프 커밋으로 재배포";
+          else echo "same=false" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/configure-pages@v5
+        if: steps.how.outputs.same != 'true'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.how.outputs.same != 'true'
         with:
           path: site
       - id: deploy
+        if: steps.how.outputs.same != 'true'
         uses: actions/deploy-pages@v4
+      - name: 같은 커밋 재배포 — 스탬프 커밋 후 새 실행으로 배포
+        if: steps.how.outputs.same == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          date +"%Y-%m-%d %H:%M %Z" > .deploy_stamp
+          git add .deploy_stamp
+          git commit -q -m "[deploy] $(cat .deploy_stamp) 자료 갱신 배포용 스탬프"
+          git push -q origin HEAD:main
+          gh workflow run pipeline.yml --ref main -f mode=skip -f reference=false -f ai_coop=none -f mail=false
+          echo "새 커밋 $(git rev-parse --short HEAD) 으로 배포 실행을 띄웠다"
 
       # ---- 정리: 이 실행의 아티팩트만 남기고 지우고, 30일 지난 실행 기록을 지운다. 개별 실패는 경고만.
       - name: 아티팩트·옛 실행 기록 정리

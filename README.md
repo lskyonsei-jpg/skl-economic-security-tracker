@@ -27,7 +27,7 @@
 - **plan** — 예약 실행이면 매일 incremental, 일요일 full, 매월 4일 기준자료. 수동 실행이면 입력값. 코드 push 면 둘 다 건너뛰고 빌드만.
 - **panel1** (산업정책): 보관함(Release `state`)에서 GTA 자료 내려받기 → `auto_update.py`(GTA API 수집, BERT 분류, 변경 리포트; 멈춤 조건 `guard()`) → 매월 4일 `collect_reference.py` → 바뀐 자산만 보관함에 올림
 - **panel2** (한미 AI 협력): 보관함에서 사건·제안 파일 내려받기 → `ai_coop_tasks.py apply`(연구자 결정 반영) → `daily`(검색·중복 제거·코딩·제안) → 사건·제안 파일 올림. 단계별 설명은 코드북 "업데이트 Agent 작동 순서"
-- **site** (둘 다 끝난 뒤, 실패해도): 보관함 전부 내려받기 → `publish_site.py` → GitHub Pages 배포 → 아티팩트·30일 지난 실행 기록 정리 → 메일(`MAIL_USER`·`MAIL_PASS` 있을 때: 예약 실행 결과와 모든 실패, 수동 실행의 `mail` 입력이나 커밋 메시지 `[mail]` 로도)
+- **site** (둘 다 끝난 뒤, 실패해도): 보관함 전부 내려받기 → `publish_site.py` → GitHub Pages 배포(마지막 배포와 같은 커밋이면 `.deploy_stamp` 커밋을 만들고 그 커밋으로 배포 실행을 새로 띄운다 — Pages 가 같은 SHA 재배포를 무시하기 때문) → 아티팩트·30일 지난 실행 기록 정리 → 메일(`MAIL_USER`·`MAIL_PASS` 있을 때: 예약 실행 결과와 모든 실패, 수동 실행의 `mail` 입력이나 커밋 메시지 `[mail]` 로도)
 
 코드만 push 하면 자료 갱신 없이 빌드·배포만 한다. `문서/` 는 코드북 2종(`코드북_패널.md`, `코드북.md`)만 빌드를 일으킨다. 수동 실행(Actions → pipeline → Run workflow)에서 패널 1 GTA 모드·기준자료, 패널 2 일일 실행, 메일 여부를 따로 고른다.
 
