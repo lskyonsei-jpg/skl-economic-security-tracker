@@ -246,7 +246,7 @@ def _page(title: str, hero_meta: str, body: str, asof: str, built: str) -> str:
 <body>{nav("ai_coop.html")}
 <header class="hero"><div class="wrap"><span class="eyebrow">Panel 2</span><h1>{html.escape(title)}</h1>
 {hero_meta}</div></header>
-{with_last_update("</header>", asof)[len("</header>"):]}
+{with_last_update("</header>", built[:10])[len("</header>"):]}
 {body}
 {footer(asof, built)}
 </body></html>'''

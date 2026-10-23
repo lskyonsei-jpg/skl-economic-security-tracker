@@ -210,7 +210,7 @@ def page(title: str, body: str, depth: int = 0, current: str = "") -> str:
     if depth:
         nav = nav.replace('href="', f'href="{up}')
         foot = foot.replace('href="', f'href="{up}')
-    body = ai_coop_site.with_last_update(body, STATE.get("data_end_date", ""))
+    body = ai_coop_site.with_last_update(body, datetime.now().strftime("%Y-%m-%d"))   # 사이트를 마지막으로 만든 날 (자료 기준일은 푸터)
     return f"""<!doctype html>
 <html lang="ko">
 <head>
