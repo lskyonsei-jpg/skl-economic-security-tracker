@@ -133,7 +133,7 @@ def subnav(current: str) -> str:
     tabs = [("ai_coop.html", "Dashboard"), ("review.html", "Review")]
     cur = ' aria-current="page"'
     items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in tabs)
-    return f'<div class="subnav"><div class="wrap">{items}</div></div>'
+    return f'<nav class="subnav">{items}</nav>'
 
 
 def with_last_update(body: str, date: str) -> str:
@@ -226,7 +226,7 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   FORMS.forEach((f,i)=>{{const yy=T+20+laneH*i+laneH/2; s+=`<text class="tl-axis" x="${{L-10}}" y="${{yy+8}}" text-anchor="end">${{f}}</text>`;}});
   E.forEach((e,i)=>{{const li=Math.max(FORMS.indexOf(e.form),0); const yy=T+20+laneH*li+laneH/2+((i%5)-2)*4; s+=`<circle data-i="${{i}}" cx="${{x(e.date)}}" cy="${{yy}}" r="7" fill="${{FORM_COLOR[e.form]||css('--muted')}}" fill-opacity=".85"/>`;}});
   svg.innerHTML=s;
-  svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
+  svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`<b>${{e.date}}</b><br>${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
   svg.addEventListener('mouseleave',()=>tip.style.display='none');
   const tb=document.querySelector('#records tbody'); const esc=t=>String(t).replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}})[c]);
   const ORGS=D.orgs||{{}}; let orgSel=null;
@@ -257,9 +257,9 @@ def _page(title: str, hero_meta: str, body: str, asof: str, built: str) -> str:
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} · SKL</title><link rel="stylesheet" href="site.css"></head>
 <body>{nav("ai_coop.html")}
-<header class="hero"><div class="wrap"><span class="eyebrow">Panel 2 · AI Cooperation</span><h1>{html.escape(title)}</h1>
+<header class="hero"><div class="wrap"><span class="eyebrow">Panel 2 · AI Cooperation</span><div class="hero-row"><h1>{html.escape(title)}</h1>{subnav("ai_coop.html")}</div>
 {hero_meta}</div></header>
-{subnav("ai_coop.html")}{with_last_update("</header>", built[:10])[len("</header>"):]}
+{with_last_update("</header>", built[:10])[len("</header>"):]}
 {body}
 {footer(asof, built)}
 </body></html>'''
@@ -289,10 +289,20 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
     def ev_line(ev: dict) -> str:
         return (f'{_esc(ev.get("date"))} · {_esc(ev.get("form"))} · {_esc(ev.get("track"))} · {_esc(", ".join(ev.get("sectors", [])))} · '
                 f'금액 {_esc(ev.get("amount_usd_bn"))} · conf {_esc(ev.get("confidence"))}')
+    FIELD_KO = {"amount_usd_bn": "금액(억 달러)", "amount_krw_bn": "금액(억 원)", "form": "형태", "track": "track", "sectors": "분야", "date": "날짜",
+                "title": "제목", "us_parties": "미국 측", "kr_parties": "한국 측", "lifecycle": "진행 상태", "is_event": "사건 여부", "summary": "요약"}
+    def _lab(field) -> str:
+        return FIELD_KO.get(field, _esc(field))
     def _old(v) -> str:   # 기존 판단 값. 비어 있으면 '없음'
         return "없음" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
-    def _new(v) -> str:   # 모델 판단 값. 비우자는 제안이면 '삭제 권장' (연구자 지시 2026-10-23)
-        return "삭제 권장" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
+    def _new(v, field=None) -> str:   # 모델 판단 값. 그 항목만 비우자는 제안은 '값 삭제 권장', 사건 자체를 빼자는 제안은 '사건 삭제 권장'
+        if field == "is_event":
+            return "사건 삭제 권장"
+        return "값 삭제 권장" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
+    def _diff_line(d: dict) -> str:   # 한 줄 요약: '형태 확정계약 → MOU·의향', '금액(억 달러) 80.0 → 값 삭제 권장', '사건 삭제 권장'
+        if d.get("field") == "is_event":
+            return "사건 삭제 권장"
+        return f'{_lab(d.get("field"))} {_old(d.get("old"))} → {_new(d.get("new"), d.get("field"))}'
     def card(p: dict, title: str, meta: str, body: str) -> str:
         """한 줄 요약(제목·요지) + 결정 라디오를 항상 보이고, 상세는 '열기' 뒤에 둔다."""
         e = p.get("evidence", {})
@@ -337,34 +347,33 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                     meta = f'{what} · conf {_esc(p.get("confidence"))}'
                 else:
                     title = f'재검토: {_esc(p.get("target_title"))}'
-                    meta = " · ".join(f'{_esc(d.get("field"))} {_old(d.get("old"))} → {_new(d.get("new"))}' for d in pl.get("diffs", [])) or f'conf {_esc(p.get("confidence"))}'
+                    meta = "변경 제안: " + (" · ".join(_diff_line(d) for d in pl.get("diffs", [])) or "없음")
                 rec = []
                 if pl.get("new_event"):
                     rec.append(f'<p>후속 사건 추가: <b>{_esc(pl["new_event"].get("title"))}</b> — {ev_line(pl["new_event"])}</p>')
                 for u in pl.get("updates", []):
-                    rec.append(f'<p><b>{_esc(u.get("field"))}</b> 기존 판단 {_old(u.get("old"))} → 모델 판단 {_new(u.get("new"))}<br><span class="small">{_esc(u.get("evidence"))}</span></p>')
+                    rec.append(f'<p><b>{_lab(u.get("field"))}</b> 기존 판단 {_old(u.get("old"))} → 모델 판단 {_new(u.get("new"), u.get("field"))}<br><span class="small">{_esc(u.get("evidence"))}</span></p>')
                 if pl.get("lifecycle"):
                     rec.append(f'<p>진행 상태: {_esc(tgt.get("lifecycle") or "announced")} → <b>{_esc(pl["lifecycle"])}</b></p>')
                 if pl.get("diffs"):
-                    rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_old(d.get("old"))}</td><td>{_new(d.get("new"))}</td><td class="small">{_esc(d.get("reason"))}</td></tr>' for d in pl["diffs"])
-                    rec.append(f'<table><thead><tr><th>필드</th><th>기존 판단</th><th>모델 판단</th><th>기사 근거</th></tr></thead><tbody>{rows}</tbody></table>')
+                    rows = "".join(f'<tr><td>{_lab(d.get("field"))}</td><td>{_old(d.get("old"))}</td><td>{_new(d.get("new"), d.get("field"))}</td><td class="small">{_esc(d.get("reason"))}</td></tr>' for d in pl["diffs"])
+                    rec.append(f'<table><thead><tr><th>항목</th><th>기존 판단</th><th>모델 판단</th><th>기사 근거</th></tr></thead><tbody>{rows}</tbody></table>')
                 if ex:
                     body = (f'<div class="explain"><p><b>1. 왜 다시 보나</b><br>{_esc(ex.get("reason")) or "—"}</p>'
                             f'<p><b>2. 기존 코딩 ↔ 검색 결과</b><br>기존: {ev_line(tgt) if tgt else "-"}<br>검색: {_esc(ex.get("found")) or "—"}</p>'
                             f'<p><b>3. 권장 수정안</b><br>{_esc(ex.get("recommendation")) or "—"}</p>{"".join(rec)}</div>')
-                else:  # 2026-10-23 이전 방식(원 기사 재코딩)으로 만들어진 제안. 새 기사 없이 해석 차이로 낸 것일 수 있다
+                else:  # 2026-10-23 이전 방식으로 만들어진 제안(설명 세 부분 없음)
                     if pl.get("diffs"):
-                        rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_old(d.get("old"))}</td><td>{_new(d.get("new"))}</td></tr>' for d in pl["diffs"])
-                        rec = [f'<table><thead><tr><th>필드</th><th>기존 판단</th><th>모델 판단</th></tr></thead><tbody>{rows}</tbody></table>']
-                    body = (f'<p class="small">이전 방식의 제안(원 기사를 다시 코딩해 차이를 냄 · 새 기사 없음). 해석 차이뿐이면 기각해도 된다.</p>'
-                            f'<p>기존: {ev_line(tgt) if tgt else "-"}</p>{"".join(rec)}<p class="note">모델 메모: {_esc(p.get("note"))}</p>')
+                        rows = "".join(f'<tr><td>{_lab(d.get("field"))}</td><td>{_old(d.get("old"))}</td><td>{_new(d.get("new"), d.get("field"))}</td></tr>' for d in pl["diffs"])
+                        rec = [f'<table><thead><tr><th>항목</th><th>기존 판단</th><th>모델 판단</th></tr></thead><tbody>{rows}</tbody></table>']
+                    body = f'<p>기존: {ev_line(tgt) if tgt else "-"}</p>{"".join(rec)}<p class="note">모델 메모: {_esc(p.get("note"))}</p>'
             cards.append(card(p, title, meta, body))
         toggle = '<button class="btn small open-all" type="button">모두 열기</button>' if cards else ''
         sections.append(f'<section class="section rsec"><div class="wrap"><div class="rsec-head"><span class="eyebrow">{k}. {titles[k]} ({len(items)}건)</span>{toggle}</div>'
                         + ("".join(cards) if cards else '<div class="empty">없음</div>') + '</div></section>')
     howto = ('<section class="section"><div class="wrap"><details><summary>제출 방법</summary><p class="note">'
              '카드마다 승인·기각·보류를 고르고, 고칠 내용이 있으면 의견란에 적습니다. "GitHub으로 제출"을 누르면 내용이 채워진 GitHub Issue 화면이 열리고, 거기서 등록 버튼만 누르면 됩니다(GitHub 로그인 필요). '
-             '다음 날 06:00 자동 실행이 반영합니다. 승인은 그대로, 의견에 수정 지시가 있으면 고쳐서 반영하고, 기각은 기록만 남깁니다. 보류는 다음 날에도 남습니다. '
+             '다음 날 06:00 자동 실행이 반영합니다. 승인은 그대로, 의견에 수정 지시가 있으면 고쳐서 반영하고, 기각은 기록만 남깁니다. 선택하지 않은 항목은 이월 및 축적됩니다. '
              '선택은 이 브라우저에 임시 저장됩니다.</p></details></div></section>')
     submit_bar = ('<div class="submit-bar"><span id="decided-count">선택 0건</span><span class="hint">제출하면 선택이 초기화됩니다</span>'
                   '<span><button class="btn" id="clear-decisions" type="button">초기화</button> '
@@ -394,10 +403,10 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
   document.getElementById('clear-decisions').addEventListener('click',()=>{D={};save(D);cards.forEach(c=>{c.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false);const t=c.querySelector('input.other-note'); t.value=''; t.hidden=true;});count();});
 })();
 </script>""" % json.dumps(REPO)
-    body = "".join(sections) + howto + submit_bar + script
+    body = howto + "".join(sections) + submit_bar + script
     head = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n<title>판단 대기 · SKL</title><link rel="stylesheet" href="site.css"></head>\n'
-    hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Panel 2 · AI Cooperation</span><h1>한미 AI 협력 트래커</h1>'
-            + hero_meta + '</div></header>' + subnav("review.html")
+    hero = ('<header class="hero"><div class="wrap"><span class="eyebrow">Panel 2 · AI Cooperation</span><div class="hero-row"><h1>한미 AI 협력 트래커</h1>' + subnav("review.html") + '</div>'
+            + hero_meta + '</div></header>'
             + with_last_update("</header>", built[:10])[len("</header>"):] + '\n')
     return head + "<body>" + nav("review.html") + "\n" + hero + body + "\n" + footer("", built) + "\n</body></html>"
 
