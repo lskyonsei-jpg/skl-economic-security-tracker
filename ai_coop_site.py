@@ -289,6 +289,10 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
     def ev_line(ev: dict) -> str:
         return (f'{_esc(ev.get("date"))} · {_esc(ev.get("form"))} · {_esc(ev.get("track"))} · {_esc(", ".join(ev.get("sectors", [])))} · '
                 f'금액 {_esc(ev.get("amount_usd_bn"))} · conf {_esc(ev.get("confidence"))}')
+    def _old(v) -> str:   # 기존 판단 값. 비어 있으면 '없음'
+        return "없음" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
+    def _new(v) -> str:   # 모델 판단 값. 비우자는 제안이면 '삭제 권장' (연구자 지시 2026-10-23)
+        return "삭제 권장" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
     def card(p: dict, title: str, meta: str, body: str) -> str:
         """한 줄 요약(제목·요지) + 결정 라디오를 항상 보이고, 상세는 '열기' 뒤에 둔다."""
         e = p.get("evidence", {})
@@ -333,25 +337,25 @@ def render_review(props: list[dict], events_by_id: dict) -> str:
                     meta = f'{what} · conf {_esc(p.get("confidence"))}'
                 else:
                     title = f'재검토: {_esc(p.get("target_title"))}'
-                    meta = " · ".join(f'{_esc(d.get("field"))} {_esc(d.get("old"))} → {_esc(d.get("new"))}' for d in pl.get("diffs", [])) or f'conf {_esc(p.get("confidence"))}'
+                    meta = " · ".join(f'{_esc(d.get("field"))} {_old(d.get("old"))} → {_new(d.get("new"))}' for d in pl.get("diffs", [])) or f'conf {_esc(p.get("confidence"))}'
                 rec = []
                 if pl.get("new_event"):
                     rec.append(f'<p>후속 사건 추가: <b>{_esc(pl["new_event"].get("title"))}</b> — {ev_line(pl["new_event"])}</p>')
                 for u in pl.get("updates", []):
-                    rec.append(f'<p><b>{_esc(u.get("field"))}</b> {_esc(u.get("old"))} → {_esc(u.get("new"))}<br><span class="small">{_esc(u.get("evidence"))}</span></p>')
+                    rec.append(f'<p><b>{_esc(u.get("field"))}</b> 기존 판단 {_old(u.get("old"))} → 모델 판단 {_new(u.get("new"))}<br><span class="small">{_esc(u.get("evidence"))}</span></p>')
                 if pl.get("lifecycle"):
                     rec.append(f'<p>진행 상태: {_esc(tgt.get("lifecycle") or "announced")} → <b>{_esc(pl["lifecycle"])}</b></p>')
                 if pl.get("diffs"):
-                    rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_esc(d.get("old"))}</td><td>{_esc(d.get("new"))}</td><td class="small">{_esc(d.get("reason"))}</td></tr>' for d in pl["diffs"])
-                    rec.append(f'<table><thead><tr><th>필드</th><th>기존(연구자)</th><th>권장</th><th>기사 근거</th></tr></thead><tbody>{rows}</tbody></table>')
+                    rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_old(d.get("old"))}</td><td>{_new(d.get("new"))}</td><td class="small">{_esc(d.get("reason"))}</td></tr>' for d in pl["diffs"])
+                    rec.append(f'<table><thead><tr><th>필드</th><th>기존 판단</th><th>모델 판단</th><th>기사 근거</th></tr></thead><tbody>{rows}</tbody></table>')
                 if ex:
                     body = (f'<div class="explain"><p><b>1. 왜 다시 보나</b><br>{_esc(ex.get("reason")) or "—"}</p>'
                             f'<p><b>2. 기존 코딩 ↔ 검색 결과</b><br>기존: {ev_line(tgt) if tgt else "-"}<br>검색: {_esc(ex.get("found")) or "—"}</p>'
                             f'<p><b>3. 권장 수정안</b><br>{_esc(ex.get("recommendation")) or "—"}</p>{"".join(rec)}</div>')
                 else:  # 2026-10-23 이전 방식(원 기사 재코딩)으로 만들어진 제안. 새 기사 없이 해석 차이로 낸 것일 수 있다
                     if pl.get("diffs"):
-                        rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_esc(d.get("old"))}</td><td>{_esc(d.get("new"))}</td></tr>' for d in pl["diffs"])
-                        rec = [f'<table><thead><tr><th>필드</th><th>기존(연구자)</th><th>모델</th></tr></thead><tbody>{rows}</tbody></table>']
+                        rows = "".join(f'<tr><td>{_esc(d.get("field"))}</td><td>{_old(d.get("old"))}</td><td>{_new(d.get("new"))}</td></tr>' for d in pl["diffs"])
+                        rec = [f'<table><thead><tr><th>필드</th><th>기존 판단</th><th>모델 판단</th></tr></thead><tbody>{rows}</tbody></table>']
                     body = (f'<p class="small">이전 방식의 제안(원 기사를 다시 코딩해 차이를 냄 · 새 기사 없음). 해석 차이뿐이면 기각해도 된다.</p>'
                             f'<p>기존: {ev_line(tgt) if tgt else "-"}</p>{"".join(rec)}<p class="note">모델 메모: {_esc(p.get("note"))}</p>')
             cards.append(card(p, title, meta, body))
