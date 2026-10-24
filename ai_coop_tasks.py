@@ -223,7 +223,7 @@ def task_a(client, system: str, state: dict, events: list[dict], budget: Budget,
                 "unknown_orgs": unk_us + unk_kr,
                 "extra_sources": [{"url": o["url"], "title": o["title"], "form": None, "confidence": None} for o in c.get("others", [])],
                 "evidence": {"url": inp["url"] or c["url"], "via": inp["via"], "kind": inp["kind"], "chars": inp["chars"],
-                             "sha256": inp["sha256"], "excerpt": inp["text"][:500]},
+                             "sha256": inp["sha256"], "excerpt": inp["text"][:500], "article_url": inp.get("article_url")},
             })
     return dedup_proposals(proposals, [q for q in state["proposals"] if q["task"] == "A" and q["status"] == "proposed"])
 
@@ -608,7 +608,10 @@ def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
         ev["track"] = cc.derive_track(ev.get("us_parties", []), ev.get("kr_parties", [])) or ev.get("track")
         ev.update({"status": "confirmed", "coded_by": cc.MODEL, "approved_by": "researcher", "approved_on": today,
                    "administration": cc.administration(ev.get("date") or today), "lifecycle": ev.get("lifecycle") or "announced", "updates": [],
-                   "sources": [{"url": src["url"], "grade": ev.get("source_grade")}] if src else [], "proposal_id": p["id"]})
+                   # 1순위 출처(공식 문서·보도자료면 그것) + 기사(보조). 연구자 지시 2026-10-24
+                   "sources": ([{"url": src["url"], "grade": ev.get("source_grade")}]
+                               + ([{"url": src["article_url"], "grade": 2}] if src.get("article_url") and src["article_url"] != src["url"] else [])) if src else [],
+                   "proposal_id": p["id"]})
         for k in ("summary", "note"):
             ev.setdefault(k, "")
         ev.setdefault("prior_event_id", None)

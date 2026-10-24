@@ -415,8 +415,10 @@ def search_alternatives(query: str, date: str | None, window_days: int = 21, lim
 
 
 def resolve_input(title: str, date: str | None, source_url: str | None, rss_summary: str = "") -> dict:
-    """유료벽 3단계(연구자 결정 2026-10-22).
-    1) 원문 URL 본문  2) 같은 사건의 다른 무료 출처(보도자료·정부 문서 우선)  3) 제목(+RSS 요약)만, 확신도 상한 0.5.
+    """출처 확보 순서.
+    0) 같은 사건의 정부 공식 문서·기업 보도자료 원문(GRADE1_HINTS)이 검색되면 그것이 1순위 출처. 기사는 article_url 로 보조 출처
+       (연구자 지시 2026-10-24: 구글뉴스는 수집처일 뿐 원천이 아니다)
+    1) 기사 원문 본문  2) 유료벽·짧음이면 같은 사건의 다른 무료 출처  3) 제목(+RSS 요약)만, 확신도 상한 0.5 (유료벽 3단계, 2026-10-22).
     돌려주는 dict 에 코딩에 쓴 원문(text)을 그대로 담는다 — 재현성."""
     import hashlib as _h
     tried = []
@@ -428,28 +430,33 @@ def resolve_input(title: str, date: str | None, source_url: str | None, rss_summ
             rec.update(extra)
         return rec
 
+    article, article_meta = "", {}
     if source_url:
-        body, meta = fetch_body(source_url)
-        tried.append({"step": 1, "url": source_url, "chars": len(body)})
-        if len(body) >= 300:
-            return pack("body", source_url, meta.get("via", "direct"), body, {"meta": meta})
+        article, article_meta = fetch_body(source_url)
+        tried.append({"step": 1, "url": source_url, "chars": len(article)})
+    has_article = len(article) >= 300
     cands = search_alternatives(title, date) if title else []
     picked = []
     for c in cands[:8]:
         real = _decode_gnews(c["link"]) if c["engine"] == "google" else c["link"]
         if not real or any(d in real for d in PAYWALL_DOMAINS) or real == source_url:
             continue
+        official = any(h in real for h in GRADE1_HINTS)
+        if has_article and not official:
+            continue   # 기사 본문이 이미 있으면 공식 원문만 찾는다
         body, meta = fetch_body(real)
-        tried.append({"step": 2, "url": real, "chars": len(body), "title": c.get("title", "")})
+        tried.append({"step": 0 if official else 2, "url": real, "chars": len(body), "title": c.get("title", "")})
         if len(body) >= 300:
-            grade1 = any(h in real for h in GRADE1_HINTS)
-            picked.append((0 if grade1 else 1, -len(body), real, body, meta))
-            if grade1:
+            picked.append((0 if official else 1, -len(body), real, body, meta))
+            if official:
                 break
-    if picked:
-        picked.sort()
-        _, _, real, body, meta = picked[0]
-        return pack("body", real, "alternative:" + meta.get("via", "direct"), body, {"meta": meta, "alternative_of": source_url})
+    picked.sort()
+    if picked and (picked[0][0] == 0 or not has_article):
+        rank, _, real, body, meta = picked[0]
+        return pack("body", real, ("official:" if rank == 0 else "alternative:") + meta.get("via", "direct"), body,
+                    {"meta": meta, "article_url": source_url})
+    if has_article:
+        return pack("body", source_url, article_meta.get("via", "direct"), article, {"meta": article_meta})
     text = title + ("\n\n" + rss_summary if rss_summary else "")
     return pack("title", source_url, "none", text, {"body_missing": True})
 
@@ -459,7 +466,7 @@ def clip(body: str, head: int = 6000, tail: int = 2000) -> str:
     return body if len(body) <= head + tail else body[:head] + "\n...(중략)...\n" + body[-tail:]
 
 
-# ------------------------------------------------------------------ recode
+# ------------------------------------------------------------------ 공통
 
 
 def jaccard(a: list[str], b: list[str]) -> float:
