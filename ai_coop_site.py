@@ -261,23 +261,17 @@ def render_review(props: list[dict], events_by_id: dict) -> dict:
         return (f'{_esc(ev.get("date"))} · {_esc(ev.get("form"))} · {_esc(ev.get("track"))} · {_esc(", ".join(ev.get("sectors", [])))} · '
                 f'금액 {_esc(ev.get("amount_usd_bn"))} · conf {_esc(ev.get("confidence"))}')
     FIELD_KO = {"amount_usd_bn": "금액(억 달러)", "amount_krw_bn": "금액(억 원)", "form": "형태", "track": "track", "sectors": "분야", "date": "날짜",
-                "title": "제목", "us_parties": "미국 측", "kr_parties": "한국 측", "lifecycle": "진행 상태", "is_event": "사건 여부", "summary": "요약"}
+                "title": "제목", "us_parties": "미국 측", "kr_parties": "한국 측", "lifecycle": "진행 상태", "summary": "요약"}
     def _lab(field) -> str:
         return FIELD_KO.get(field, _esc(field))
     def _old(v) -> str:   # 기존 판단 값. 비어 있으면 '없음'
         return "없음" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
-    def _new(v, field=None) -> str:   # 모델 판단 값. 그 항목만 비우자는 제안은 '값 삭제 권장', 사건 자체를 빼자는 제안은 '사건 삭제 권장'
-        if field == "is_event":
-            return "사건 삭제 권장"
+    def _new(v, field=None) -> str:   # 모델 판단 값. 그 항목을 비우자는 제안은 '값 삭제 권장'
         return "값 삭제 권장" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
     def ev_link(tgt: dict) -> str:   # 기존 사건 → 대시보드 사건 목록의 그 행으로 (a 태그라 Ctrl-클릭·가운데 클릭으로 새 탭)
         if not tgt:
             return "기존: -"
         return f'기존: <a class="ev-link" href="ai_coop.html#{_esc(tgt.get("id"))}" title="대시보드에서 이 사건 보기">{ev_line(tgt)}</a>'
-    def _diff_line(d: dict) -> str:   # 한 줄 요약: '형태 확정계약 → MOU·의향', '금액(억 달러) 80.0 → 값 삭제 권장', '사건 삭제 권장'
-        if d.get("field") == "is_event":
-            return "사건 삭제 권장"
-        return f'{_lab(d.get("field"))} {_old(d.get("old"))} → {_new(d.get("new"), d.get("field"))}'
     def card(p: dict, title: str, meta: str, body: str) -> str:
         """한 줄 요약(제목·요지) + 결정 라디오를 항상 보이고, 상세는 '열기' 뒤에 둔다."""
         e = p.get("evidence", {})
@@ -291,7 +285,8 @@ def render_review(props: list[dict], events_by_id: dict) -> dict:
                 f'<label><input type="radio" name="d-{pid}" value="hold"> 보류</label>'
                 f'<label><input type="radio" name="d-{pid}" value="other"> 기타</label>'
                 f'<input type="text" class="other-note" data-note="{pid}" placeholder="의견·수정 지시 (예: 금액은 20으로, 형태는 집행, 주체에 기아 추가)" hidden>'
-                + (f'<span class="small hold-note">어제 의견: {_esc(p.get("hold_note"))}</span>' if p.get("hold_note") else "") +
+                + (f'<span class="small hold-note">어제 의견: {_esc(p.get("hold_note"))}</span>' if p.get("hold_note") else "")
+                + (f'<span class="small hold-note">반영 실패: {_esc(p.get("apply_error"))}</span>' if p.get("apply_error") else "") +
                 f'<details class="rmore"><summary><span class="btn small"></span></summary>{body}'
                 f'<p class="note">원문 발췌({_esc(e.get("via", ""))} · {_esc(e.get("chars", ""))}자): {_esc(str(e.get("excerpt", ""))[:300])}…</p>'
                 f'</details></div></div>')
@@ -364,8 +359,9 @@ def render_review(props: list[dict], events_by_id: dict) -> dict:
   const count=()=>{const n=Object.values(D).filter(x=>x.decision).length;document.getElementById('decided-count').textContent='선택 '+n+'건';};
   cards.forEach(c=>{const id=c.dataset.id; const d=D[id]||{};
     const ta=c.querySelector('input.other-note'); const showNote=on=>{ta.hidden=!on; if(on)ta.focus();};
-    c.querySelectorAll('input[type=radio]').forEach(r=>{if(d.decision===r.value)r.checked=true; r.addEventListener('change',()=>{D[id]=Object.assign(D[id]||{},{decision:r.value});save(D);count();showNote(r.value==='other'||!!(D[id].note&&D[id].note.trim()));});});
-    if(d.note)ta.value=d.note; if(d.decision==='other'||d.note)ta.hidden=false; ta.addEventListener('input',()=>{D[id]=Object.assign(D[id]||{},{note:ta.value});save(D);});
+    // 의견란: 기타(보류+의견)와 승인(수정 지시가 있으면 고쳐서 반영 — 코드북 0단계)에서 연다
+    c.querySelectorAll('input[type=radio]').forEach(r=>{if(d.decision===r.value)r.checked=true; r.addEventListener('change',()=>{D[id]=Object.assign(D[id]||{},{decision:r.value});save(D);count();showNote(r.value==='other'||r.value==='approve'||!!(D[id].note&&D[id].note.trim()));});});
+    if(d.note)ta.value=d.note; if(d.decision==='other'||d.decision==='approve'||d.note)ta.hidden=false; ta.addEventListener('input',()=>{D[id]=Object.assign(D[id]||{},{note:ta.value});save(D);});
   });
   count();
   document.querySelectorAll('.open-all').forEach(b=>b.addEventListener('click',()=>{const ds=[...b.closest('.rsec').querySelectorAll('details.rmore')];const open=ds.some(d=>!d.open);ds.forEach(d=>d.open=open);b.textContent=open?'모두 닫기':'모두 열기';}));

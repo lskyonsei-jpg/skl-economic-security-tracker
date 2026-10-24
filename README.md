@@ -13,7 +13,7 @@
 | `ip_risk.html` 패널 1 | Distortive Industrial Policy Tracker — GTA(매일 API) × BSV ideal point × IMF DOTS·WDI. 산점도·회귀, 블록 구성 (지도·순위·추이·HS 필터는 2026-10-22 삭제) | `ip_risk_site.py`(자료) + `ip_risk_template.html`(패널 CSS·본문·스크립트) |
 | `ai_coop.html` 패널 2 | 한미 AI 협력 트래커 — 연구자 확정 코딩 + 매일 자동 제안. 사건 제목 클릭 → 상세(요약·비고·후속 갱신·출처), 기관명 클릭 → 그 기관의 현황 | `ai_coop_site.py` |
 | `review.html` | 판단 대기 — 자동 제안(A 새 사건·B 갱신·C 재검토)에 승인·기각·보류를 적어 GitHub Issue 로 제출 | `ai_coop_site.py` |
-| `data.html` | 사이트 JSON, 저장소, 연결된 API 목록 | `publish_site.py` (`APIS`) |
+| `data.html` | 사이트 JSON, 저장소, 연결된 API 목록, GTA 변경 리포트 목록 | `publish_site.py` (`APIS`) |
 | `codebook.html` | 화면 산식·코딩 규칙(`문서/코드북_패널.md`) + GTA 열 정의(`문서/코드북.md`) | `publish_site.py` |
 | `r/*.html` | GTA 변경 리포트 | `publish_site.py` |
 
@@ -26,9 +26,9 @@
 
 패널 1과 패널 2는 독립된 작업(job)으로 병렬로 돈다. 한쪽이 실패해도 다른 쪽과 사이트 배포는 진행된다(실패한 패널은 어제 자료 그대로).
 
-- **plan** — 예약 실행이면 매일 incremental, 일요일 full, 매월 4일 기준자료. 수동 실행이면 입력값. 코드 push 면 둘 다 건너뛰고 빌드만.
+- **plan** — 예약 실행이면 매일 incremental, 일요일(한국 시간) full, 매월 4일 기준자료. 수동 실행이면 입력값. 코드 push 면 둘 다 건너뛰고 빌드만.
 - **panel1** (산업정책): 보관함(Release `state`)에서 GTA 자료 내려받기 → `auto_update.py`(GTA API 수집, BERT 분류, 변경 리포트; 멈춤 조건 `guard()`) → 매월 4일 `collect_reference.py` → 바뀐 자산만 보관함에 올림
-- **panel2** (한미 AI 협력): 보관함에서 사건·제안 파일 내려받기 → `ai_coop_tasks.py apply`(연구자 결정 반영) → `daily`(검색·중복 제거·코딩·제안) → 사건·제안 파일 올림. 단계별 설명은 코드북 "업데이트 Agent 작동 순서"
+- **panel2** (한미 AI 협력): 보관함에서 사건·제안 파일 내려받기 → `ai_coop_tasks.py apply`(연구자 결정 반영) → 반영 결과 올림 → `daily`(검색·중복 제거·코딩·제안) → 사건·제안 파일 올림. 단계별 설명은 코드북 "업데이트 Agent 작동 순서"
 - **site** (둘 다 끝난 뒤, 실패해도): 보관함 전부 내려받기 → `publish_site.py` → GitHub Pages 배포(마지막 배포와 같은 커밋이면 `.deploy_stamp` 커밋을 만들고 그 커밋으로 배포 실행을 새로 띄운다 — Pages 가 같은 SHA 재배포를 무시하기 때문) → 아티팩트·30일 지난 실행 기록 정리 → 메일(`MAIL_USER`·`MAIL_PASS` 있을 때: 예약 실행 결과와 모든 실패, 수동 실행의 `mail` 입력이나 커밋 메시지 `[mail]` 로도)
 
 코드만 push 하면 자료 갱신 없이 빌드·배포만 한다. `문서/` 는 코드북 2종(`코드북_패널.md`, `코드북.md`)만 빌드를 일으킨다. 수동 실행(Actions → pipeline → Run workflow)에서 패널 1 GTA 모드·기준자료, 패널 2 일일 실행, 메일 여부를 따로 고른다.
@@ -38,7 +38,7 @@
 | 이름 | 용도 | 없으면 |
 |---|---|---|
 | `GTA_API_KEY` | GTA 수집 | 파이프라인 실패 |
-| `ANTHROPIC_API_KEY` | 패널 2 자동 코딩(Claude Opus 5.5, effort medium) | 재코딩·자동 수집 단계 건너뜀 |
+| `ANTHROPIC_API_KEY` | 패널 2 자동 코딩(Claude Opus 5.5, effort medium) | panel2 작업 전체(결정 반영 포함) 건너뜀 |
 | `MAIL_USER` + `MAIL_PASS` | 매일 예약 실행 결과와 실패를 Gmail 로 보냄(자기 자신에게). `MAIL_USER` = Gmail 주소, `MAIL_PASS` = Google 계정 [앱 비밀번호](https://myaccount.google.com/apppasswords) 16자리(2단계 인증 필요) | 메일 단계 건너뜀 |
 
 연결된 API 전체 목록은 사이트 `data.html`(코드는 `publish_site.py` 의 `APIS`). 패널 2 설계는 `문서/20261022_설계_한미AI협력트래커_자동화.md`.

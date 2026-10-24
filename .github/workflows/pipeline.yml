@@ -71,8 +71,8 @@ jobs:
     steps:
       - id: plan
         run: |
-          DOW=$(date -u +%u)   # 1=월 ... 7=일
-          DOM=$(date -u +%d)
+          DOW=$(date +%u)   # 1=월 ... 7=일. 한국 시간(env TZ) — 06:00 KST 실행이 UTC 로는 전날이라 -u 를 쓰면 요일·날짜가 하루 어긋난다
+          DOM=$(date +%d)
           case "${{ github.event_name }}" in
             schedule)
               if [ "$DOW" = "7" ]; then MODE=full; else MODE=incremental; fi
@@ -95,6 +95,9 @@ jobs:
     if: needs.plan.outputs.mode != 'skip' || needs.plan.outputs.reference == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 300
+    outputs:
+      line: ${{ steps.summary.outputs.line }}   # 메일 본문 한 줄
+      new: ${{ steps.summary.outputs.new }}     # 메일 제목의 신규 건수
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -155,12 +158,23 @@ jobs:
           gh release upload state $UP -R "$GITHUB_REPOSITORY" --clobber
           echo "올림: $UP"
       - name: 요약
+        id: summary
         run: |
+          LINE="GTA ${{ needs.plan.outputs.mode }} · 변경 ${{ steps.gta.outputs.changed || 'n/a' }} · 기준자료 ${{ steps.reference.outputs.changed || '건너뜀' }}"
+          NEW=""
+          R=$(ls logs/change_report_*.md 2>/dev/null | tail -1)
+          if [ -n "$R" ] && [ "${{ steps.gta.outputs.changed }}" = "true" ]; then
+            # 요약표의 "| 신규 (…) | 1,401 |", "| 수정 | 185 |" 줄에서 건수를 뽑는다
+            NEW=$(grep -E '^\| *(신규|새로 들어온 것)' "$R" | head -1 | awk -F'|' '{gsub(/ /,"",$3); print $3}')
+            MOD=$(grep -E '^\| *수정' "$R" | head -1 | awk -F'|' '{gsub(/ /,"",$3); print $3}')
+            LINE="$LINE · 신규 ${NEW:-?} · 수정 ${MOD:-?}"
+          fi
+          echo "line=$LINE" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
           {
             echo "## 패널 1"
-            echo "- GTA 모드: ${{ needs.plan.outputs.mode }} / 변경: ${{ steps.gta.outputs.changed || 'n/a' }} / 기준자료: ${{ steps.reference.outputs.changed || '건너뜀' }}"
+            echo "- $LINE"
             echo "- state.json: $(tr -d '\n' < cache/state.json | cut -c1-200)"
-            R=$(ls logs/change_report_*.md 2>/dev/null | tail -1)
             if [ -n "$R" ] && [ "${{ steps.gta.outputs.changed }}" = "true" ]; then
               echo; echo "<details><summary>변경 리포트 앞부분</summary>"; echo; head -80 "$R"; echo; echo "</details>"
             fi
@@ -172,6 +186,8 @@ jobs:
     if: needs.plan.outputs.ai_coop == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    outputs:
+      line: ${{ steps.daily.outputs.line }}   # 메일 본문 한 줄 (ai_coop_tasks.py daily 가 GITHUB_OUTPUT 에 쓴다)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -206,6 +222,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload state data/ai_coop_events.json data/ai_coop_state.json -R "$GITHUB_REPOSITORY" --clobber
       - name: 일일 판단 요청
+        id: daily
         if: steps.apply.outputs.ran == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -337,17 +354,17 @@ jobs:
           if [ "${{ job.status }}" = "success" ] && [ "$P1" != "failure" ] && [ "$P2" != "failure" ]; then STATUS=성공; else STATUS=실패; fi
           K() { case "$1" in success) echo 성공;; failure) echo 실패;; skipped) echo 건너뜀;; *) echo "$1";; esac; }
           P=$(python -c "import json;d=json.load(open('site/review.json'));print(d['pending'])" 2>/dev/null || echo "?")
-          NEW=$(grep -ho '신규 [0-9,]*건' logs/change_report_*.md 2>/dev/null | tail -1)
-          echo "subject=[SKL Tracker] $TODAY $STATUS · 판단 대기 ${P}건${NEW:+ · $NEW}" >> "$GITHUB_OUTPUT"
+          NEW="${{ needs.panel1.outputs.new }}"
+          echo "subject=[SKL Tracker] $TODAY $STATUS · 판단 대기 ${P}건${NEW:+ · GTA 신규 ${NEW}건}" >> "$GITHUB_OUTPUT"
+          # 패널 요약은 각 job 의 outputs 로 받는다(GITHUB_STEP_SUMMARY 는 step 마다 새 파일이라 여기서 읽으면 비어 있다)
           {
             echo "## SKL Economic Security Tracker — $TODAY 갱신 ($STATUS)"
             echo
-            echo "- 패널 1 산업정책: $(K "$P1") (GTA 모드 ${{ needs.plan.outputs.mode }})"
-            echo "- 패널 2 한미 AI 협력: $(K "$P2") · 판단 대기 **${P}건** → $SITE_URL/review.html"
-            echo "- 사이트: $SITE_URL"
+            echo "- 패널 1 산업정책: $(K "$P1")${{ needs.panel1.outputs.line && format(' — {0}', needs.panel1.outputs.line) }}"
+            echo "- 패널 2 한미 AI 협력: $(K "$P2")${{ needs.panel2.outputs.line && format(' — {0}', needs.panel2.outputs.line) }}"
+            echo "- 판단 대기 **${P}건** → $SITE_URL/review.html"
+            echo "- 사이트: $SITE_URL · 파일 $(find site -type f | wc -l)개"
             echo "- 실행 기록: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            echo
-            cat "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           } > mail.md
       - name: 메일 발송
         if: always() && steps.mail.outcome == 'success'

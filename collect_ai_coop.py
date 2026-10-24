@@ -1,18 +1,15 @@
 """한미 AI 협력 트래커 — 사건 수집·코딩. 설계: 문서/20261022_설계_한미AI협력트래커_자동화.md
 
-  python collect_ai_coop.py seed                       data/seed/*.csv -> data/ai_coop_events.json (연구자 확정 코딩)
-  python collect_ai_coop.py recode [--effort high] [--limit N]
-                                                       표본 사건의 원문을 다시 받아 Task A 로 코딩하고 연구자 코딩과 대조
-  (예정) discover / run                                 신규 기사 탐지 -> Task A/B -> 병합 -> 게시
+  python collect_ai_coop.py seed    data/seed/*.csv -> data/ai_coop_events.json (연구자 확정 코딩; 사건 파일이 없을 때의 부트스트랩)
+  그 밖에는 ai_coop_tasks.py 가 라이브러리로 쓴다(프롬프트·스키마·본문 확보·기관 표기·track).
 
 모델: claude-opus-5-5, effort medium (연구자 확정 2026-10-22, 비교 실험 없이 medium 으로). 구조화 출력(output_config.format)으로 스키마를 강제한다.
 프롬프트 v2(2026-10-22): form 은 문서의 법적 성격 기준, track 은 정부-정부/정부-민간/민간-민간, 금액은 거래금액만,
 기사 하나에 사건 여러 개(events 배열), 기관 표기는 reference/ai_coop_orgs.csv 의 표준 표기.
-키:   환경변수 ANTHROPIC_API_KEY (GitHub Secrets). 로컬에는 없으므로 recode 는 CI 에서 돈다.
-비용 안전장치: 한 번 실행에 MAX_CALLS 회 이상 호출하지 않는다.
+키:   환경변수 ANTHROPIC_API_KEY (GitHub Secrets). 비용 상한은 ai_coop_tasks.MAX_DAILY_CALLS.
 
 유료벽 3단계(연구자 결정 2026-10-22): 원문 본문 → 같은 사건의 다른 무료 출처(보도자료·정부 문서 우선) → 제목만(확신도 상한 0.5).
-재현성: 코딩에 쓴 입력 원문을 그대로 기록한다(ai_coop_*_inputs.jsonl, 실행 아티팩트). 공개 결과에는 URL·수집 경로·길이·SHA-256·앞 500자.
+재현성: 제안마다 입력 원문의 URL·수집 경로·길이·SHA-256·앞 500자를 기록한다.
 """
 from __future__ import annotations
 
@@ -32,7 +29,6 @@ DATA = HERE / "data"
 SEED_DIR = DATA / "seed"
 EVENTS = DATA / "ai_coop_events.json"
 MODEL = "claude-opus-5-5"
-MAX_CALLS = int(os.environ.get("AI_COOP_MAX_CALLS", "120"))
 
 FORMS = ["MOU·의향", "선언", "집행", "확정계약"]
 TRACKS = ["정부-정부", "정부-민간", "민간-민간"]
@@ -471,127 +467,12 @@ def jaccard(a: list[str], b: list[str]) -> float:
     return len(A & B) / len(A | B) if A | B else 1.0
 
 
-def cmd_recode(effort: str, limit: int | None) -> int:
-    import anthropic
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("[recode] ANTHROPIC_API_KEY 없음"); return 1
-    if not EVENTS.is_file():
-        cmd_seed()
-    events = json.loads(EVENTS.read_text(encoding="utf-8"))["events"]
-    system = build_system(events)
-    client = anthropic.Anthropic()
-    out_path = DATA / f"ai_coop_recode_{effort}.json"
-    results, calls, usage_total = [], 0, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
-    started = time.monotonic()
-    targets = [e for e in events if e["sources"]][: (limit or None)]
-    inputs_path = DATA / f"ai_coop_recode_inputs_{effort}.jsonl"
-    inputs_fh = inputs_path.open("w", encoding="utf-8")
-    for e in targets:
-        url = e["sources"][0]["url"]
-        inp = resolve_input(e["title"], e["date"], url)
-        rec = {"id": e["id"], "title": e["title"], "url": url, "in_examples": e["title"] in EXAMPLE_TITLES,
-               "truth": {"form": e["form"], "track": e["track"], "sectors": e["sectors"],
-                         "us": e["us_parties"], "kr": e["kr_parties"], "amount": e["amount_usd_bn"], "date": e["date"]},
-               "input": {k: v for k, v in inp.items() if k not in ("text", "meta")} | {"excerpt": inp["text"][:500]}}
-        inputs_fh.write(json.dumps({"id": e["id"], "kind": inp["kind"], "url": inp["url"], "via": inp["via"],
-                                    "sha256": inp["sha256"], "text": inp["text"]}, ensure_ascii=False) + "\n")
-        if calls >= MAX_CALLS:
-            rec["fetch"] = "skipped_max_calls"; results.append(rec); continue
-        meta = dict(inp.get("meta") or {}); meta["url"] = inp["url"] or url
-        try:
-            pred, usage = code_article(client, system, meta, clip(inp["text"]), effort, kind=inp["kind"])
-        except anthropic.APIStatusError as exc:
-            rec["fetch"] = "ok"; rec["error"] = f"{exc.status_code} {exc.message}"; results.append(rec)
-            print(f"  [API 오류] {exc.status_code} {str(exc.message)[:160]}")
-            if exc.status_code == 400 and sum(1 for x in results if str(x.get("error", "")).startswith("400")) >= 3:
-                print("  400 오류 3회 — 요청 형식 문제로 보고 중단"); break
-            continue
-        except (RuntimeError, anthropic.APIConnectionError) as exc:
-            calls += 1
-            rec["fetch"] = inp["kind"]; rec["error"] = str(exc)[:200]; results.append(rec)
-            print(f"  [오류] {e['date']} {e['title'][:30]} — {str(exc)[:120]}")
-            continue
-        calls += 1
-        for k in usage_total:
-            usage_total[k] += usage[k]
-        events_pred = pred.get("events") or []
-        for ev in events_pred:
-            ev["us_parties"], _ = canonical_parties(ev.get("us_parties", []))
-            ev["kr_parties"], _ = canonical_parties(ev.get("kr_parties", []))
-            if inp["kind"] == "title" and isinstance(ev.get("confidence"), (int, float)):
-                ev["confidence"] = min(ev["confidence"], 0.5)
-        truth_us, _ = canonical_parties(e["us_parties"]); truth_kr, _ = canonical_parties(e["kr_parties"])
-        def closeness(ev):
-            return jaccard(ev.get("us_parties", []), truth_us) + jaccard(ev.get("kr_parties", []), truth_kr) + (0.5 if ev.get("form") == e["form"] else 0)
-        best = max(events_pred, key=closeness) if events_pred else {}
-        rec["fetch"] = inp["kind"]; rec["pred"] = best; rec["pred_all"] = events_pred; rec["n_events"] = len(events_pred)
-        rec["article_note"] = pred.get("article_note", "")
-        rec["match"] = {
-            "is_event": bool(events_pred),
-            "form": best.get("form") == e["form"], "track": best.get("track") == e["track"],
-            "sectors_jaccard": round(jaccard(best.get("sectors", []), e["sectors"]), 2),
-            "us_jaccard": round(jaccard(best.get("us_parties", []), truth_us), 2),
-            "kr_jaccard": round(jaccard(best.get("kr_parties", []), truth_kr), 2),
-            "amount": (best.get("amount_usd_bn") == e["amount_usd_bn"]),
-            "date": best.get("date") == e["date"],
-        }
-        results.append(rec)
-        m = rec["match"]
-        print(f"  {e['date']} {e['title'][:30]:<30} [{inp['kind']:<5} {inp['via'][:14]:<14}] n={len(events_pred)} form {'O' if m['form'] else 'X'}({best.get('form')}) "
-              f"track {'O' if m['track'] else 'X'} sec {m['sectors_jaccard']} us {m['us_jaccard']} kr {m['kr_jaccard']} amt {'O' if m['amount'] else 'X'} conf {best.get('confidence')}")
-        time.sleep(0.5)
-    inputs_fh.close()
-
-    coded = [r for r in results if "match" in r]
-    held = [r for r in coded if not r["in_examples"]]
-    def rate(rs, key): return (sum(1 for r in rs if r["match"][key] is True) / len(rs)) if rs else None
-    def mean(rs, key): return (sum(r["match"][key] for r in rs) / len(rs)) if rs else None
-    summary = {
-        "effort": effort, "model": MODEL, "targets": len(targets), "fetched": len(coded),
-        "input_kinds": {k: sum(1 for r in results if r.get("fetch") == k) for k in ("body", "title")},
-        "errors": sum(1 for r in results if "error" in r), "calls": calls, "usage": usage_total,
-        "cost_usd": round(usage_total["input"] * 4 / 1e6 + usage_total["output"] * 20 / 1e6
-                          + usage_total["cache_read"] * 0.2 / 1e6 + usage_total["cache_write"] * 5 / 1e6, 3),
-        "seconds": round(time.monotonic() - started),
-        "heldout_n": len(held),
-        "events_per_article": round(sum(r.get("n_events", 0) for r in coded) / len(coded), 2) if coded else None,
-        "prompt_version": "v2",
-        "heldout_by_kind": {k: {"n": sum(1 for r in held if r["fetch"] == k),
-                                "form": rate([r for r in held if r["fetch"] == k], "form")} for k in ("body", "title")},
-        "heldout": {"form": rate(held, "form"), "track": rate(held, "track"), "sectors_jaccard": mean(held, "sectors_jaccard"),
-                    "us_jaccard": mean(held, "us_jaccard"), "kr_jaccard": mean(held, "kr_jaccard"), "amount": rate(held, "amount"),
-                    "date": rate(held, "date"), "is_event": rate(held, "is_event")},
-        "examples_n": len(coded) - len(held),
-        "examples": {"form": rate([r for r in coded if r["in_examples"]], "form")},
-    }
-    out_path.write_text(json.dumps({"summary": summary, "results": results}, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(json.dumps(summary, ensure_ascii=False, indent=1))
-    step = os.environ.get("GITHUB_STEP_SUMMARY")
-    if step:
-        h = summary["heldout"]
-        with open(step, "a", encoding="utf-8") as fh:
-            fh.write(f"## 한미 AI 협력 — 표본 재코딩 ({effort})\n\n"
-                     f"- 대상 {summary['targets']}건, 코딩 {summary['fetched']}건(본문 {summary['input_kinds']['body']} · 제목만 {summary['input_kinds']['title']}), 호출 {calls}회, 비용 ${summary['cost_usd']}\n"
-                     f"- 입력 종류별 form 일치율(보류 표본): {summary['heldout_by_kind']}\n"
-                     f"- 보류 표본(예시 제외) {summary['heldout_n']}건 일치율: form {h['form']}, track {h['track']}, sectors J {h['sectors_jaccard']}, "
-                     f"미국 주체 J {h['us_jaccard']}, 한국 주체 J {h['kr_jaccard']}, 금액 {h['amount']}, 날짜 {h['date']}\n\n"
-                     "| 날짜 | 사건 | 입력 | form 정답 | form 예측 | track | sectors J | conf |\n|---|---|---|---|---|---|---|---|\n")
-            for r in coded:
-                m, p = r["match"], r["pred"]
-                fh.write(f"| {r['truth']['date']} | {r['title'][:40]}{' (예시)' if r['in_examples'] else ''} | {r['fetch']}/{r['input']['via'][:12]} | {r['truth']['form']} | {p.get('form')} | "
-                         f"{'O' if m['track'] else 'X'} | {m['sectors_jaccard']} | {p.get('confidence')} |\n")
-    return 0
-
-
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("seed")
-    r = sub.add_parser("recode"); r.add_argument("--effort", default="medium", choices=["low", "medium", "high"]); r.add_argument("--limit", type=int)
-    a = p.parse_args()
-    if a.cmd == "seed":
-        return cmd_seed()
-    return cmd_recode(a.effort, a.limit)
+    p.parse_args()
+    return cmd_seed()
 
 
 if __name__ == "__main__":

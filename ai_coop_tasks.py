@@ -1,21 +1,23 @@
 """한미 AI 협력 트래커 — 일일 자동 판단 요청. AI 는 아무것도 직접 바꾸지 않는다(연구자 결정 2026-10-22).
 
   python ai_coop_tasks.py daily    탐지 → Task A/B/C → 제안을 data/ai_coop_state.json 에 쌓는다. 사이트의 "판단 대기" 페이지가 보여 준다
-  python ai_coop_tasks.py apply    data/ai_coop_decisions.csv(연구자가 GitHub 웹에서 편집)의 승인·기각을 사건 파일에 반영한다
+  python ai_coop_tasks.py apply    판단 대기 페이지에서 제출한 결정(GitHub Issue, 보조로 data/ai_coop_decisions.csv)을 사건 파일에 반영한다
 
 세 절
   A. 새 사건 후보   RSS 질의(최근 2일) → 기관 마스터로 1차 필터 → Task A 코딩 → 제안
   B·C. 기존 사건 점검  확정 사건 전부를 매일 검색 → 처음 보는 기사만 모델이 기존 레코드와 비교 → 후속·진행 상태 변화면 B(갱신),
                       기사의 사실이 기존 코딩과 다르면 C(재검토). 설명은 세 부분(왜 다시 보나 / 기존 ↔ 검색 결과 / 권장 수정안). (2026-10-23)
 
-제안 id: A-YYYYMMDD-nn, B-…, C-…. 승인된 A 는 사건 추가(status=confirmed, coded_by=model, approved_by=researcher),
-B 는 후속 사건 추가 또는 필드 갱신·lifecycle 변경, C 는 필드 갱신. 모든 반영은 updates[] 에 근거와 함께 남는다.
+제안 id: A-YYYY-MM-DD-nn, B-…, C-…. 승인된 A 는 사건 추가(status=confirmed, coded_by=model, approved_by=researcher),
+B 는 후속 사건 추가 또는 lifecycle 변경, C 는 필드 정정(CORRECTABLE 에 있는 필드만). 모든 반영은 updates[] 에 근거와 함께 남는다.
+track 은 승인·정정 때 기관 마스터(reference/ai_coop_orgs.csv)의 type 으로 다시 정한다.
 
 비용 상한: 하루 MAX_DAILY_CALLS 회. 상한에 닿으면 남은 작업은 다음 날로.
 필요한 환경변수: ANTHROPIC_API_KEY.
 결정 경로 두 가지: (1) 사이트 판단 대기 페이지에서 제출한 GitHub Issue(라벨 ai-coop-decision, 본문 한 줄 = 한 결정)
 (2) data/ai_coop_decisions.csv — 열 proposal_id, decision(approve|reject|hold), note, date.
-의견(note)에 수정 지시가 있으면 Task D 가 모델로 제안 값을 고친 뒤 반영한다(연구자 의견이 우선). GH_TOKEN 이 있어야 Issue 를 읽는다.
+승인 의견(note)에 수정 지시가 있으면 모델이 그 지시대로 제안 값을 고친 뒤 반영한다(연구자 의견 우선, 코드북 "0. 준비").
+고치지 못하면 반영하지 않고 미결로 남긴다(apply_error — 카드에 보인다). GH_TOKEN 이 있어야 Issue 를 읽는다.
 """
 from __future__ import annotations
 
@@ -52,11 +54,17 @@ QUERIES_EN = ["Korea AI partnership", "Samsung Nvidia", "SK hynix Nvidia", "Hyun
 
 
 def load_state() -> dict:
-    if STATE.is_file():
-        state = json.loads(STATE.read_text(encoding="utf-8"))
-        state.setdefault("checked", {})   # 2026-10-23 B·C 통합: 사건별 {date, since}. 옛 checked_b/checked_c 는 그대로 둔다
-        return state
-    return {"seen": {}, "checked": {}, "proposals": [], "counter": {}}
+    if not STATE.is_file():
+        return {"seen": {}, "checked": {}, "proposals": [], "counter": {}}
+    state = json.loads(STATE.read_text(encoding="utf-8"))
+    checked = state.setdefault("checked", {})   # 2026-10-23 B·C 통합: 사건별 {date, since}
+    # 2026-10-23 이전 상태 파일(checked_b: "id" → 날짜, "id:since" → since)을 한 번 옮기고 지운다
+    legacy = state.pop("checked_b", {}); state.pop("checked_c", None)
+    for key, value in legacy.items():
+        eid, _, kind = key.partition(":")
+        rec = checked.setdefault(eid, {})
+        rec.setdefault("since" if kind == "since" else "date", value)
+    return state
 
 
 def save_state(state: dict) -> None:
@@ -184,8 +192,7 @@ def dedup_candidates(cands: list[dict], days: int = 3) -> list[dict]:
 # ------------------------------------------------------------------ Task A
 
 
-def task_a(client, system: str, state: dict, events: list[dict], budget: Budget, today: str) -> list[dict]:
-    cands = prefilter(discover())
+def task_a(client, system: str, state: dict, events: list[dict], budget: Budget, today: str, cands: list[dict]) -> list[dict]:
     fresh = dedup_candidates([c for c in cands if c["url"] not in state["seen"]])
     print(f"[A] 후보 {len(cands)}건, 처음 보는 것(중복 제거 뒤) {len(fresh)}건")
     proposals = []
@@ -237,9 +244,13 @@ def dedup_proposals(new: list[dict], pending_old: list[dict]) -> list[dict]:
     못 잡았지만 모델이 같은 주체로 코딩한 경우 — 를 거래 단위로 하나로 합친다. 확신도 높은 것이 대표, 나머지는 extra_sources.
     이미 미결인 이전 제안과 같은 거래면 그쪽에 출처만 보탠다."""
     kept: list[dict] = []
+    into_old = 0
     for p in sorted(new, key=lambda x: -(x["payload"].get("confidence") or 0)):
-        home = next((q for q in pending_old if _same_deal(q["payload"], p["payload"])), None) or \
-               next((q for q in kept if _same_deal(q["payload"], p["payload"])), None)
+        home = next((q for q in pending_old if _same_deal(q["payload"], p["payload"])), None)
+        if home is not None:
+            into_old += 1
+        else:
+            home = next((q for q in kept if _same_deal(q["payload"], p["payload"])), None)
         if home is None:
             p.setdefault("extra_sources", [])
             kept.append(p)
@@ -250,7 +261,8 @@ def dedup_proposals(new: list[dict], pending_old: list[dict]) -> list[dict]:
         # 대표보다 강한 form 이 나오면 메모에 남긴다(바꾸지는 않는다)
         if p["payload"].get("form") != home["payload"].get("form"):
             home.setdefault("form_variants", []).append(p["payload"].get("form"))
-    print(f"[A] 중복 제거: {len(new)}건 -> {len(kept)}건 (이전 미결에 합쳐진 것 {len(new) - len(kept) - sum(len(k.get('extra_sources', [])) for k in kept)}건)")
+    if len(kept) != len(new):
+        print(f"[A] 중복 제거: {len(new)}건 -> {len(kept)}건 (이전 미결에 합쳐진 것 {into_old}건)")
     return kept
 
 
@@ -352,15 +364,26 @@ def _record_line(e: dict) -> str:
             f"금액 {e.get('amount_usd_bn')} · 진행 {e.get('lifecycle') or 'announced'}")
 
 
+# C 재검토가 고칠 수 있는 필드(코드북: 금액·날짜·주체·형태·track·분야). 모델이 낸 다른 키는 버린다.
+CORRECTABLE = ("date", "title", "form", "track", "sectors", "us_parties", "kr_parties", "amount_usd_bn", "amount_krw_bn", "amount_is_estimate", "summary")
+
+
 def _coerce(field: str, value):
-    """모델 출력은 문자열이다. 숫자 필드는 숫자로 되돌린다."""
+    """모델 출력은 문자열이다. 숫자·목록 필드는 사건 레코드의 자료형으로 되돌린다."""
+    if value in (None, "", "null", "None"):
+        return None
     if field in ("amount_usd_bn", "amount_krw_bn", "confidence"):
         try:
-            return None if value in (None, "", "null", "None") else float(value)
+            return float(value)
         except (TypeError, ValueError):
             return value
+    if field == "amount_is_estimate":
+        return str(value).lower() in ("true", "1", "yes", "예")
     if field == "sectors" and isinstance(value, str):
         return [s.strip() for s in re.split(r"[,、·/]", value) if s.strip()]
+    if field in ("us_parties", "kr_parties"):
+        names = value if isinstance(value, list) else [s.strip() for s in re.split(r"[,、·/]", value) if s.strip()]
+        return cc.canonical_parties(names)[0]
     return value
 
 
@@ -381,11 +404,11 @@ def _followup_proposal(state: dict, e: dict, rel: dict, url: str, body: str, tod
             "explain": explain, "confidence": rel.get("confidence"), "note": rel.get("recommendation", ""), "evidence": evidence}
     if relation == "correction":
         diffs = [{"field": u["field"], "old": e.get(u["field"], u.get("old")), "new": _coerce(u["field"], u["new"]), "reason": u.get("evidence", "")}
-                 for u in rel.get("updates", []) if u.get("field")]
-        diffs = [d for d in diffs if str(d["old"]) != str(d["new"])]
+                 for u in rel.get("updates", []) if u.get("field") in CORRECTABLE]
+        diffs = [d for d in diffs if d["old"] != d["new"] and str(d["old"]) != str(d["new"])]
         if not diffs or _already_pending(state, e["id"], "C"):
             return None
-        return dict(base, id=new_id(state, "C", today), task="C", payload={"diffs": diffs, "model_event": None})
+        return dict(base, id=new_id(state, "C", today), task="C", payload={"diffs": diffs})
     new_event = rel.get("new_event") if relation == "follow_up" else None
     if new_event:
         new_event["us_parties"], _ = cc.canonical_parties(new_event.get("us_parties", []))
@@ -401,11 +424,7 @@ def _followup_proposal(state: dict, e: dict, rel: dict, url: str, body: str, tod
 
 
 def _since_for(state: dict, e: dict) -> str:
-    rec = state["checked"].get(e["id"])
-    if rec and rec.get("since"):
-        return rec["since"]
-    legacy = state.get("checked_b", {}).get(e["id"] + ":since")   # 2026-10-23 이전 상태 파일
-    return legacy or e["date"]
+    return state["checked"].get(e["id"], {}).get("since") or e["date"]
 
 
 def _search_since(query: str, since: str) -> list[dict]:
@@ -463,18 +482,7 @@ def task_followup(client, state: dict, events: list[dict], budget: Budget, today
     return proposals
 
 
-# ------------------------------------------------------------------ 판단 기록(md)·결정 반영
-
-
-def render_judgment(today: str, props: list[dict], budget: "Budget", stats: dict) -> str:
-    """사람이 읽는 기록용 마크다운(data/ai_coop_judgment_<날짜>.md). 화면은 ai_coop_site 가 state 에서 직접 그린다."""
-    a = [p for p in props if p["task"] == "A"]; b = [p for p in props if p["task"] == "B"]; c = [p for p in props if p["task"] == "C"]
-    lines = [f"# 자동 판단 요청 {today}", "", f"탐지 후보 {stats.get('cands', 0)}건 · 모델 호출 {budget.used}회 · 제안 A {len(a)} / B {len(b)} / C {len(c)}", "",
-             "승인·기각은 data/ai_coop_decisions.csv 에 `proposal_id,decision,note,date` 한 줄씩. decision 은 approve 또는 reject.", ""]
-    for p in props:
-        lines.append(f"- **{p['id']}** [{p['task']}] " + (p["payload"].get("title", "") if p["task"] == "A" else p.get("target_title", "")) + f" · conf {p.get('confidence') or p['payload'].get('confidence')}")
-        lines.append(f"  - 근거: {p['evidence'].get('url', '')}")
-    return "\n".join(lines)
+# ------------------------------------------------------------------ 결정 반영 (코드북 "0. 준비")
 
 
 DECISION_WORDS = {"approve": "approved", "승인": "approved", "reject": "rejected", "기각": "rejected", "hold": "hold", "보류": "hold",
@@ -545,10 +553,15 @@ D_SCHEMA = {
 }
 
 
+class ReviseError(RuntimeError):
+    """의견 반영(revise_with_note) 실패. 원안을 그대로 승인하지 않고 제안을 미결로 남긴다."""
+
+
 def revise_with_note(event: dict, note: str) -> tuple[dict, list[dict]]:
-    """Task D: 연구자 의견으로 제안 값을 고친다. 키가 없거나 실패하면 원안 그대로."""
+    """코드북 0단계: 승인 의견에 수정 지시가 있으면 모델이 그 지시대로 제안 값을 고친다(연구자 의견 우선).
+    실패하면 ReviseError — 의견이 빠진 원안이 조용히 확정되지 않게."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        return event, []
+        raise ReviseError("ANTHROPIC_API_KEY 없음")
     import anthropic
     client = anthropic.Anthropic()
     base = {k: event.get(k) for k in cc.EVENT_SCHEMA["properties"]}
@@ -568,17 +581,19 @@ def revise_with_note(event: dict, note: str) -> tuple[dict, list[dict]]:
         r = client.messages.create(model=cc.MODEL, max_tokens=6000, system=D_SYSTEM, messages=[{"role": "user", "content": user}],
                                    output_config={"effort": "medium", "format": {"type": "json_schema", "schema": D_SCHEMA}})
         if r.stop_reason in ("refusal", "max_tokens"):
-            return event, []
+            raise ReviseError(f"응답 중단: {r.stop_reason}")
         out = json.loads(next(b.text for b in r.content if b.type == "text"))
-        ev = dict(event); ev.update(out["event"])
-        ev["us_parties"], _ = cc.canonical_parties(ev.get("us_parties", [])); ev["kr_parties"], _ = cc.canonical_parties(ev.get("kr_parties", []))
-        return ev, out.get("changes", [])
+    except ReviseError:
+        raise
     except Exception as exc:  # noqa: BLE001
-        print(f"  [D 오류] {str(exc)[:120]}")
-        return event, []
+        raise ReviseError(str(exc)[:120]) from exc
+    ev = dict(event); ev.update(out["event"])
+    ev["us_parties"], _ = cc.canonical_parties(ev.get("us_parties", [])); ev["kr_parties"], _ = cc.canonical_parties(ev.get("kr_parties", []))
+    return ev, out.get("changes", [])
 
 
 def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
+    """승인된 제안을 사건 파일에 반영한다. 의견에 수정 지시가 있으면 먼저 revise_with_note 로 고친다(실패하면 ReviseError, 반영 안 함)."""
     events = doc["events"]
     by_id = {e["id"]: e for e in events}
     changed_by_note: list[dict] = []
@@ -589,6 +604,8 @@ def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
     def stamp(ev: dict, src: dict | None) -> dict:
         ev = dict(ev)
         ev.setdefault("id", f"{(ev.get('date') or today).replace('-', '')}-{hashlib.sha1((ev.get('date', '') + ev.get('title', '')).encode()).hexdigest()[:8]}")
+        # track 은 기관 마스터의 type 으로 기계적으로 정한다(코드북). 마스터에 없는 기관뿐이면 모델 값을 둔다.
+        ev["track"] = cc.derive_track(ev.get("us_parties", []), ev.get("kr_parties", [])) or ev.get("track")
         ev.update({"status": "confirmed", "coded_by": cc.MODEL, "approved_by": "researcher", "approved_on": today,
                    "administration": cc.administration(ev.get("date") or today), "lifecycle": ev.get("lifecycle") or "announced", "updates": [],
                    "sources": [{"url": src["url"], "grade": ev.get("source_grade")}] if src else [], "proposal_id": p["id"]})
@@ -616,10 +633,6 @@ def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
         if pl.get("new_event"):
             ev = stamp(pl["new_event"], p["evidence"]); ev["prior_event_id"] = target["id"]
             events.append(ev); done.append(f"후속 사건 추가 {ev['title']}")
-        for u in pl.get("updates", []):
-            old = target.get(u["field"]); target[u["field"]] = u["new"]
-            target.setdefault("updates", []).append({"date": today, "field": u["field"], "old": old, "new": u["new"], "evidence": u["evidence"], "url": p["evidence"]["url"], "proposal_id": p["id"]})
-            done.append(f"{u['field']} 갱신")
         if pl.get("lifecycle"):
             target.setdefault("updates", []).append({"date": today, "field": "lifecycle", "old": target.get("lifecycle"), "new": pl["lifecycle"], "url": p["evidence"]["url"], "proposal_id": p["id"]})
             target["lifecycle"] = pl["lifecycle"]; done.append(f"lifecycle={pl['lifecycle']}")
@@ -627,12 +640,17 @@ def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
     if p["task"] == "C":
         done = []
         for d in p["payload"]["diffs"]:
-            if d["field"] == "is_event":
-                target["status"] = "rejected"; done.append("사건 아님 → 제외"); continue
+            if d["field"] not in CORRECTABLE:
+                continue
             old = target.get(d["field"]); target[d["field"]] = d["new"]
             target.setdefault("updates", []).append({"date": today, "field": d["field"], "old": old, "new": d["new"], "evidence": d.get("reason", ""), "url": p["evidence"]["url"], "proposal_id": p["id"]})
             done.append(f"{d['field']}: {old} → {d['new']}")
-        return f"{p['id']}: " + ", ".join(done)
+        if any(d["field"] in ("us_parties", "kr_parties") for d in p["payload"]["diffs"]):
+            track = cc.derive_track(target.get("us_parties", []), target.get("kr_parties", []))   # 주체가 바뀌면 track 도 마스터로 다시
+            if track and track != target.get("track"):
+                target.setdefault("updates", []).append({"date": today, "field": "track", "old": target.get("track"), "new": track, "evidence": "주체 정정에 따라 기관 마스터 type 으로 다시 정함", "proposal_id": p["id"]})
+                target["track"] = track; done.append(f"track → {track}")
+        return f"{p['id']}: " + ", ".join(done or ["반영할 내용 없음"])
     return f"{p['id']}: 알 수 없는 task"
 
 
@@ -656,12 +674,17 @@ def cmd_apply(today: str) -> int:
         p = pending.get(pid)
         if not p:
             continue
+        p.pop("apply_error", None)
         if d["decision"] == "hold":
             if d["note"]:
                 p["hold_note"] = d["note"]
             lines.append(f"{pid}: 보류" + (f" ({d['note'][:60]})" if d["note"] else "")); continue
         if d["decision"] == "approved":
-            lines.append(apply_proposal(p, doc, today, note=d["note"])); p["status"] = "applied"
+            try:
+                lines.append(apply_proposal(p, doc, today, note=d["note"])); p["status"] = "applied"
+            except ReviseError as exc:   # 의견을 반영하지 못함 — 원안을 확정하지 않고 미결로 남긴다. 카드에 사유가 보인다
+                p["apply_error"] = f"{today} 의견을 반영하지 못해 미결로 남김 ({exc}). 다시 제출하거나 의견 없이 승인"
+                lines.append(f"{pid}: 반영 실패 — 의견 반영 오류 ({str(exc)[:60]}), 미결로 남김"); continue
         else:
             lines.append(f"{pid}: 기각" + (f" ({d['note'][:60]})" if d["note"] else "")); p["status"] = "rejected"
         p["decided"] = d["date"] or today; p["decision_note"] = d["note"]; p["decision_source"] = d["source"]
@@ -691,37 +714,29 @@ def cmd_daily(today: str) -> int:
     system = cc.build_system(events)
     client = anthropic.Anthropic()
     budget = Budget(MAX_DAILY_CALLS)
-    stats = {}
-    cands = prefilter(discover()); stats["cands"] = len(cands)
-    stats["filtered"] = len(cands)
-    props = []
-    props += task_a(client, system, state, events, budget, today)
-    stats["coded_a"] = sum(1 for _ in props)
+    cands = prefilter(discover())
+    props = task_a(client, system, state, events, budget, today, cands)
     props += task_followup(client, state, events, budget, today)
     state["proposals"] += props
     save_state(state)
-    body = render_judgment(today, props, budget, stats)
-    (DATA / f"ai_coop_judgment_{today}.md").write_text(body, encoding="utf-8")
     pending_total = sum(1 for p in state["proposals"] if p["status"] == "proposed")
-    step = os.environ.get("GITHUB_STEP_SUMMARY")
-    if step:
-        with open(step, "a", encoding="utf-8") as fh:
-            fh.write(f"## 한미 AI 협력 — 일일 판단 요청 {today}\n\n- 제안 A {sum(p['task']=='A' for p in props)} · B {sum(p['task']=='B' for p in props)} · C {sum(p['task']=='C' for p in props)} · 호출 {budget.used}회 · 누적 미결 {pending_total}건\n"
-                     "- 사이트의 review.html 에 표시. 결정은 data/ai_coop_decisions.csv 에.\n")
-    print(f"[daily] A {sum(p['task']=='A' for p in props)} B {sum(p['task']=='B' for p in props)} C {sum(p['task']=='C' for p in props)}, 호출 {budget.used}")
+    n = {k: sum(p["task"] == k for p in props) for k in "ABC"}
+    line = f"제안 A {n['A']} · B {n['B']} · C {n['C']} · 호출 {budget.used}회 · 누적 미결 {pending_total}건"
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+            fh.write(f"## 패널 2 — 일일 판단 요청 {today}\n\n- {line}\n- 판단 대기: {os.environ.get('SITE_URL', '')}/review.html\n")
+    if os.environ.get("GITHUB_OUTPUT"):   # 워크플로의 메일 본문
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+            fh.write(f"line={line}\n")
+    print(f"[daily] {line}")
     return 0
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("cmd", choices=["daily", "apply", "discover"])
+    p.add_argument("cmd", choices=["daily", "apply"])
     p.add_argument("--date", default=dt.date.today().isoformat())
     a = p.parse_args()
-    if a.cmd == "discover":
-        cands = prefilter(discover())
-        for c in cands:
-            print(f"  {c['engine']:<6} {c['hint_us']} / {c['hint_kr']}  {c['title'][:70]}  {c['url'][:60]}")
-        print(f"후보 {len(cands)}건"); return 0
     if a.cmd == "apply":
         return cmd_apply(a.date)
     return cmd_daily(a.date)

@@ -1,6 +1,6 @@
 """SKL Economic Security Tracker 업데이트.
 
-GTA API 자료를 BERT로 분류해 엑셀 2개(분석용 22열 / 전체 34열)를 만든다.
+GTA API 자료를 BERT로 분류해 cache/master.parquet(34열)를 갱신하고 logs/ 에 변경 리포트를 남긴다.
 
 - 분석 단위: GTA intervention
 - 열: GTA API 29개 + BERT 라벨 3개 + BERT 신뢰도 2개
@@ -15,14 +15,12 @@ GTA API 자료를 BERT로 분류해 엑셀 2개(분석용 22열 / 전체 34열)�
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
 import html as htmlmod
 import json
 import os
 import platform
 import re
-import stat
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -35,7 +33,6 @@ import requests
 
 
 HERE = Path(__file__).resolve().parent
-OUTPUT = HERE / "output"
 CACHE = HERE / "cache"
 LOGS = HERE / "logs"
 STATE_PATH = CACHE / "state.json"
@@ -47,8 +44,6 @@ API_URL = "https://api.globaltradealert.org/api/v2/gta/data/"
 # 0건이라(2026-08-18 확인), 여유를 두고 그 해 1월 1일을 하한으로 둔다.
 # 2026-08-18까지는 2010-01-01이었다. 2008~2009년 4,428건이 이때 들어왔다.
 START_DATE = "2008-01-01"
-# 산출 엑셀 이름에 들어가는 자료 시작 연도. START_DATE에서 뽑아 쓴다.
-START_YEAR = START_DATE[:4]
 PAGE_SIZE = 1000
 
 MODEL_REPO = "industrialpolicygroup/industrialpolicy-classifier"
@@ -102,25 +97,6 @@ COLUMN_ORDER = [
     "latest_action_date", "latest_action_name",
 ] + LABEL_COLUMNS + CONFIDENCE_COLUMNS
 
-# 분석용 파일에 남기는 23개. 나머지 11개는 코드북에 이유를 적어두었다.
-# 빼는 것: intervention_description, state_act_source, affected_products,
-#          state_act_url, intervention_url, mast_subchapter, latest_action_name,
-#          last_edited, latest_action_date, inferred_jurisdictions,
-#          bert_max_probability
-#
-# bert_was_truncated는 2026-08-13에 넣었다. BERT는 512토큰까지만 읽으므로 긴
-# 설명문은 앞부분만 보고 판정한다. 실측 1,877건(분류분의 2.3%)이 여기 해당하고
-# 반덤핑에 몰려 있다(Anti-dumping 유형의 13.6%). 이 칸이 없으면 분석용 파일만
-# 갖고는 그 건들을 걸러낼 수가 없다.
-ANALYSIS_COLUMNS = [
-    "intervention_id", "state_act_id", "state_act_title",
-    "date_announced", "date_published", "date_implemented", "date_removed", "is_in_force",
-    "implementing_jurisdictions", "implementing_jurisdiction_groups", "implementation_level",
-    "intervention_type", "mast_chapter", "gta_evaluation", "eligible_firm",
-    "affected_sectors", "affected_jurisdictions",
-    "is_official_source", "last_updated",
-] + LABEL_COLUMNS + ["bert_was_truncated"]
-
 # 변경 감지에서 제외하는 열. GTA가 내용 변화 없이도 갱신하는 순수 메타데이터라
 # 여기에 두지 않으면 매주 수백 건이 "수정"으로 잡혀 리포트가 무의미해진다.
 CHANGE_IGNORE_COLUMNS = {"last_updated", "last_edited", "latest_action_date"}
@@ -142,27 +118,8 @@ EXPORT_CONTROL_TYPES = [
     "Local supply requirement for exports",
 ]
 
-ILLEGAL_XLSX_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
-XLSX_CELL_LIMIT = 32767
-
-# output에 남겨둘 자료 기준일 수. 이보다 오래된 날짜의 엑셀은 지운다.
-# 한 번 실행에 두 파일 72MB가 쌓이는데 지우는 장치가 없었다. 매일 돌리면
-# 한 달에 2.2GB고, 이 폴더는 OneDrive라 그게 전부 인터넷으로 올라간다.
-KEEP_OUTPUT_DATES = 3
-OUTPUT_PREFIX = "SKL_Economic_Security"
-# 옛 이름으로 만든 산출물도 정리 대상에 넣는다. 빼면 옛 파일이
-# KEEP_OUTPUT_DATES 규칙에서 누락돼 영영 안 지워진다.
-# JLOP_BERT: 2026-08 이전. SKL_Export_Control: 2026-08-15 이전.
-LEGACY_OUTPUT_PREFIXES = ("JLOP_BERT", "SKL_Export_Control")
-OUTPUT_PREFIXES = (OUTPUT_PREFIX,) + LEGACY_OUTPUT_PREFIXES
-OUTPUT_PATTERN = re.compile(
-    # 연도 자리는 느슨하게 받는다. START_DATE를 바꾸면 파일 이름의 연도도
-    # 바뀌는데, 옛 연도로 만든 파일도 정리 대상에 들어와야 하기 때문이다.
-    r"^(?:" + "|".join(OUTPUT_PREFIXES) + r")_(?:\d{4})-(\d{8})_(analysis|full)\.xlsx$"
-)
-
-# 정상 종료했지만 새 파일을 만들지 않았을 때의 종료 코드.
-# 호출하는 쪽(run_update.ps1)이 output 폴더를 열지 말지 판단하는 데 쓴다.
+# 바뀐 것이 없어 아무것도 저장하지 않고 정상 종료할 때의 종료 코드.
+# pipeline.yml 이 이 값을 보고 보관함(Release state) 올리기를 건너뛴다.
 NOTHING_WRITTEN = 3
 
 class Failure(RuntimeError):
@@ -227,100 +184,8 @@ def post_gta(api_key: str, payload: dict, max_attempts: int = 5):
         time.sleep(min(60, 2**attempt))
 
 
-def unlock(path: Path) -> None:
-    """읽기 전용 표시를 떼어낸다.
-
-    OneDrive 안에 있는 폴더/파일은 동기화 과정에서 읽기 전용 표시가 붙는 일이
-    있고, 그러면 윈도우가 삭제를 거부한다(WinError 5).
-    """
-    try:
-        os.chmod(path, stat.S_IWRITE)
-    except OSError:
-        pass
-
-
-def remove_dir(directory: Path) -> None:
-    """빈 폴더를 지운다. OneDrive가 잠시 붙잡고 있을 수 있어 몇 번 다시 시도한다."""
-    for attempt in range(4):
-        try:
-            directory.rmdir()
-            return
-        except FileNotFoundError:
-            return
-        except OSError:
-            unlock(directory)
-            if attempt == 3:
-                raise
-            time.sleep(0.5)
-
-
-def prune_api_archive(keep: Path) -> None:
-    """직전 실행분만 남긴다.
-
-    원응답은 실행마다 수백 MB다(2026-08-10 기준 24페이지 446MB). 과거 실행분은
-    master.parquet가 이전 상태를 들고 있어 쓸모가 없으므로 쌓아두지 않는다.
-    """
-    root = CACHE / "api_pages"
-    if not root.exists():
-        return
-    freed = 0
-    stuck: list[str] = []
-    for directory in root.iterdir():
-        if not directory.is_dir() or directory == keep:
-            continue
-        try:
-            for path in directory.rglob("*"):
-                if path.is_file():
-                    freed += path.stat().st_size
-                    unlock(path)
-                    path.unlink()
-            for path in sorted(directory.rglob("*"), reverse=True):
-                if path.is_dir():
-                    remove_dir(path)
-            remove_dir(directory)
-        except OSError as exc:
-            stuck.append(f"{directory.name}({exc.strerror or exc})")
-    if freed:
-        say(f"    지난 실행분 원응답 정리: {freed / 1e6:,.0f}MB 확보")
-    if stuck:
-        say(f"    빈 폴더가 남았습니다(다음 실행 때 다시 시도합니다): {', '.join(stuck)}")
-
-
-def load_archived_pages(raw_dir: Path) -> list[dict] | None:
-    """같은 종료일로 오늘 받아둔 응답이 있으면 그대로 쓴다.
-
-    중간에 끊고 다시 돌릴 때 16분짜리 수집을 반복하지 않기 위한 것이다.
-    날짜가 다르거나 하루가 지났으면 쓰지 않는다.
-    """
-    pages = sorted(raw_dir.glob("offset_*.json.gz"))
-    if not pages:
-        return None
-    age = time.time() - max(p.stat().st_mtime for p in pages)
-    if age > 24 * 3600:
-        return None
-    rows: list[dict] = []
-    for path in pages:
-        with gzip.open(path, "rt", encoding="utf-8") as handle:
-            rows.extend(unpack_response(json.load(handle)))
-    say(f"    {int(age // 60)}분 전에 받아둔 응답 재사용: {len(rows):,}건 ({len(pages)}페이지)")
-    say("    새로 받으려면 cache/api_pages 폴더를 지우고 다시 실행하세요.")
-    return rows
-
-
 def fetch_all(api_key: str, end_date: str) -> list[dict]:
     """START_DATE ~ end_date 발표분 전량. 응답에 count가 없어 누적으로만 표시한다."""
-    raw_dir = CACHE / "api_pages" / end_date.replace("-", "")
-    raw_dir.mkdir(parents=True, exist_ok=True)
-
-    archived = load_archived_pages(raw_dir)
-    if archived:
-        prune_api_archive(raw_dir)
-        return archived
-
-    prune_api_archive(raw_dir)
-    for stale in list(raw_dir.glob("offset_*.json")) + list(raw_dir.glob("offset_*.json.gz")):
-        stale.unlink()
-
     rows: list[dict] = []
     offset = 0
     started = time.monotonic()
@@ -332,10 +197,7 @@ def fetch_all(api_key: str, end_date: str) -> list[dict]:
             "sorting": "intervention_id",
             "text_format": "html",
         }
-        raw = post_gta(api_key, payload)
-        page = unpack_response(raw)
-        with gzip.open(raw_dir / f"offset_{offset:06d}.json.gz", "wt", encoding="utf-8") as handle:
-            json.dump(raw, handle, ensure_ascii=False)
+        page = unpack_response(post_gta(api_key, payload))
         rows.extend(page)
         say(f"    수집 {len(rows):,}건  ({time.monotonic() - started:,.0f}초)")
         if len(page) < PAGE_SIZE:
@@ -447,8 +309,8 @@ def strip_html_fields(rows: list[dict]) -> list[dict]:
     at 0x...>` 같은 껍데기를 보내기 때문이다(2026-08-18 전량 82,766건 중
     1,211건). html에는 이 문제가 없어 2026-08-18부터 html만 받는다.
 
-    받아둔 원응답(cache/api_pages)에는 html이 그대로 남고, 평문화는 여기서만
-    한다. 모든 수집 경로가 flatten을 지나므로 이 한 곳이면 전부 덮인다.
+    평문화는 여기서만 한다. 모든 수집 경로가 flatten을 지나므로 이 한 곳이면
+    전부 덮인다.
     """
     for row in rows:
         for field in TEXT_FIELDS:
@@ -729,7 +591,7 @@ def as_text(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def compare(previous: pd.DataFrame | None, current: pd.DataFrame,
-            last_update: str | None, detect_removals: bool = True) -> dict:
+            detect_removals: bool = True) -> dict:
     """직전 스냅숏과 대조해 새로 들어온 것·수정·삭제를 분류한다.
 
     detect_removals가 False면(증분 모드) 삭제는 판단하지 않는다. 증분에서는
@@ -892,16 +754,9 @@ def ip_label_of_row(row) -> str:
 
 
 def label_of(frame: pd.DataFrame, ids: list[int]) -> pd.Series:
-    """one-hot 3열을 라벨 문자열 하나로 접는다. 미분류는 '미분류'."""
+    """ids 각각의 라벨 텍스트. 접는 규칙은 ip_label_of_row 하나만 쓴다."""
     sub = frame.set_index("intervention_id").reindex(ids)[LABEL_COLUMNS]
-
-    def pick(row):
-        for name, value in zip(IP_LABEL_NAMES, row):
-            if pd.notna(value) and int(value) == 1:
-                return name
-        return IP_LABEL_MISSING
-
-    return sub.apply(pick, axis=1)
+    return sub.apply(ip_label_of_row, axis=1)
 
 
 def report_changes(diff: dict, previous: pd.DataFrame, current: pd.DataFrame,
@@ -1056,7 +911,7 @@ def check_export_control_types(current: pd.DataFrame) -> list[str]:
 
 
 def report_export_controls(diff: dict, previous: pd.DataFrame, current: pd.DataFrame,
-                           summary: dict, args) -> dict[str, list[int]]:
+                           summary: dict) -> dict[str, list[int]]:
     """수출통제 조치 변경만 따로 보여주는 두 번째 화면."""
     gone = check_export_control_types(current)
     if gone:
@@ -1267,7 +1122,7 @@ def build_change_report(diff: dict, summary: dict, previous: pd.DataFrame,
         add("| 항목 | 값 |")
         add("|---|---:|")
         add(f"| 전체 조치 | {len(current):,}건 |")
-        add(f"| 열 개수 (분석용 / 전체) | {len(ANALYSIS_COLUMNS)} / {len(COLUMN_ORDER)} |")
+        add(f"| 열 개수 | {len(COLUMN_ORDER)} |")
         add(f"| 가장 이른 발표일 | {announced.min():%Y-%m-%d} |")
         add(f"| 가장 늦은 발표일 | {announced.max():%Y-%m-%d} |")
         add(f"| 시행 관할 수 | {jurisdictions[jurisdictions != ''].nunique():,}곳 |")
@@ -1489,8 +1344,6 @@ def build_change_report(diff: dict, summary: dict, previous: pd.DataFrame,
 # --------------------------------------------------------------- 파일 출력
 
 
-
-
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -1523,22 +1376,14 @@ def guard(previous: pd.DataFrame | None, current: pd.DataFrame, diff: dict,
         fail(f"삭제 {len(diff['removed']):,}건이 한도 {MAX_REMOVED:,}건을 넘습니다.")
 
 
-def validate(plain: pd.DataFrame, expanded: pd.DataFrame) -> None:
-    if list(plain.columns) != ANALYSIS_COLUMNS:
-        fail(f"분석용 열 구조가 기준({len(ANALYSIS_COLUMNS)}개)과 다릅니다: {len(plain.columns)}개")
-    if list(expanded.columns) != COLUMN_ORDER:
-        fail(f"확장판 열 구조가 기준({len(COLUMN_ORDER)}개)과 다릅니다: {len(expanded.columns)}개")
-    if len(plain) != len(expanded):
-        fail("두 파일의 행 수가 다릅니다.")
-    if not plain["intervention_id"].equals(expanded["intervention_id"]):
-        fail("두 파일의 intervention_id 순서가 다릅니다.")
-    if plain["intervention_id"].duplicated().any():
-        fail("출력에 intervention_id 중복이 있습니다.")
-    sums = plain[LABEL_COLUMNS].sum(axis=1, min_count=1)
-    if not (sums.eq(1) | plain[LABEL_COLUMNS].isna().all(axis=1)).all():
+def validate(current: pd.DataFrame) -> None:
+    """guard() 가 안 보는 라벨 정합성. 열 구조·ID 결측은 guard(), ID 중복은 병합 직후에 본다."""
+    labels = current[LABEL_COLUMNS]
+    sums = labels.sum(axis=1, min_count=1)
+    if not (sums.eq(1) | labels.isna().all(axis=1)).all():
         fail("BERT 라벨 one-hot 구조가 잘못된 행이 있습니다.")
-    has_label = plain[LABEL_COLUMNS].notna().all(axis=1)
-    has_text = expanded[DESCRIPTION_COLUMN].fillna("").str.strip().ne("")
+    has_label = labels.notna().all(axis=1)
+    has_text = current[DESCRIPTION_COLUMN].fillna("").str.strip().ne("")
     if (has_label & ~has_text).any():
         fail("description이 없는데 BERT 라벨이 붙은 행이 있습니다.")
 
@@ -1558,30 +1403,6 @@ def load_master() -> pd.DataFrame | None:
     return pd.read_parquet(MASTER_PATH)
 
 
-def ask_yes_no(question: str, default: bool = True) -> bool:
-    """대화형이 아니면 default를 쓴다. 덮어쓰기처럼 되돌릴 수 없는 물음은 False.
-
-    isatty()가 참이어도 입력이 닫혀 있으면 EOFError가 난다(리디렉션·작업 스케줄러
-    등). 그때도 죽지 않고 default로 넘어간다.
-    """
-    if not sys.stdin or not sys.stdin.isatty():
-        return default
-    hint = "[Y/n]" if default else "[y/N]"
-    while True:
-        try:
-            answer = input(f"{question} {hint} ").strip().lower()
-        except EOFError:
-            say(f"\n    입력을 받을 수 없어 기본값({'예' if default else '아니오'})으로 진행합니다.")
-            return default
-        if answer == "":
-            return default
-        if answer in {"y", "yes"}:
-            return True
-        if answer in {"n", "no"}:
-            return False
-        say("    y 또는 n 을 입력해 주세요.")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="SKL Economic Security Tracker 업데이트")
     parser.add_argument("--end-date", help="자료 종료일 YYYY-MM-DD (기본: 오늘)")
@@ -1589,12 +1410,12 @@ def main() -> int:
         "--mode", choices=["incremental", "full"], default="full",
         help="incremental=빠른 업데이트, full=잠수함 패치 점검 (기본: full)",
     )
-    parser.add_argument("--yes", action="store_true", help="확인 없이 진행")
+    parser.add_argument("--yes", action="store_true", help="동작 없음. pipeline.yml 이 넘겨서 받아만 둔다")
     args = parser.parse_args()
 
     api_key = os.environ.get("GTA_API_KEY", "").strip()
     if not api_key:
-        fail("GTA_API_KEY가 없습니다. 원클릭 실행 파일로 실행해 주세요.")
+        fail("GTA_API_KEY가 없습니다. GitHub Secrets 에 넣어 주세요.")
 
     end_date = args.end_date or date.today().isoformat()
     try:
@@ -1606,7 +1427,6 @@ def main() -> int:
     if end < date.fromisoformat(START_DATE):
         fail(f"종료일이 시작일({START_DATE})보다 앞섭니다: {end_date}")
 
-    OUTPUT.mkdir(parents=True, exist_ok=True)
     LOGS.mkdir(parents=True, exist_ok=True)
     CACHE.mkdir(parents=True, exist_ok=True)
 
@@ -1668,7 +1488,7 @@ def main() -> int:
 
     say()
     say("3/5  직전 스냅숏과 대조")
-    diff = compare(previous, current, last_update, detect_removals=(mode == "full"))
+    diff = compare(previous, current, detect_removals=(mode == "full"))
     if first_run:
         say("    최초 구축이라 대조 대상이 없습니다.")
         summary = {"label_changed": []}
@@ -1681,19 +1501,16 @@ def main() -> int:
         summary = report_changes(diff, previous, current, last_update, end_date)
         no_change = not any(diff[k] for k in ("new", "changed", "removed"))
         if no_change:
-            say("  바뀐 것이 없습니다. 엑셀을 새로 만들지 않고 종료합니다.")
+            say("  바뀐 것이 없습니다. 저장하지 않고 종료합니다.")
             return NOTHING_WRITTEN
-        export_control = report_export_controls(diff, previous, current, summary, args)
+        export_control = report_export_controls(diff, previous, current, summary)
         industrial_policy = industrial_policy_changes(diff, previous, current)
         say()
-        if not args.yes and not ask_yes_no("  이대로 엑셀을 만들까요?"):
-            say("  취소했습니다. 파일을 만들지 않았습니다.")
-            return NOTHING_WRITTEN
 
     say()
     say("4/5  멈춤 조건 검사")
     guard(previous, current, diff, mode, first_run)
-    validate(current[ANALYSIS_COLUMNS].copy(), current.copy())
+    validate(current)
     say("    통과")
 
     say()
@@ -1711,7 +1528,6 @@ def main() -> int:
         "first_run": first_run,
         "mode": mode,
         "rows": len(current),
-        "columns_analysis": len(ANALYSIS_COLUMNS),
         "columns_full": len(COLUMN_ORDER),
         "missing_descriptions_count": missing_desc,
         "missing_descriptions_share": missing_desc / len(current),
@@ -1766,7 +1582,6 @@ def main() -> int:
         "last_mode": mode,
         # 마지막으로 전체 점검을 한 날. 증분 실행은 이 값을 건드리지 않는다.
         "last_full_rebuild": end_date if mode == "full" else (state or {}).get("last_full_rebuild"),
-        "last_output": None,  # 2026-10-22 엑셀 생성 중단(CI 전환)
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
     say()

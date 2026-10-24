@@ -282,9 +282,9 @@ APIS = [
 ]
 
 
-def render_data() -> str:
+def render_data(reports: list[Report]) -> str:
     repo = REPO_URL
-    files = [("ip_risk.json", "패널 1 — 국가·연도별 리스크·노출·거리"), ("ip_sectors.json", "패널 1 — 조치 단위 원자료(산점도·회귀)"),
+    files = [("ip_risk.json", "패널 1 — 국가·연도별 BSV ideal point·블록·무역비중·GDP, 블록 구성"), ("ip_sectors.json", "패널 1 — 조치 단위 원자료(산점도·회귀)"),
              ("ai_coop.json", "패널 2 — 사건 목록·집계·기관 목록")]
     rows = "".join(f'<tr><td><a href="{f}" download>{f}</a></td><td>{html.escape(d)}</td></tr>' for f, d in files)
     api_rows = "".join(
@@ -300,6 +300,9 @@ def render_data() -> str:
             f'<section class="section"><div class="wrap"><span class="eyebrow" style="text-transform:none">APIs</span><div class="panel"><div class="panel-head" style="text-transform:none">연결된 APIs</div>'
             f'<div class="tablebox" style="border:0;margin:0"><table class="api-table"><thead><tr><th style="width:11%">패널</th><th style="width:34%">API · 코드</th><th>무엇을 하나</th><th style="width:11%">주기</th><th style="width:15%">키</th></tr></thead><tbody>{api_rows}</tbody></table></div>'
             f'<div class="panel-body"><p class="note">키는 GitHub Secrets에만 있습니다. 코드에 담지 않습니다.</p></div></div></div></section>')
+    items = "".join(f'<li><span class="d">{html.escape(r.data_date)}</span><a href="r/{r.slug}.html">{html.escape(r.meta.get("실행 모드") or "변경 내역")} →</a></li>' for r in reports)
+    body += (f'<section class="section"><div class="wrap"><span class="eyebrow">GTA 변경 리포트</span><div class="panel"><div class="panel-body">'
+             f'<ul class="changes">{items or "<li>없음</li>"}</ul></div></div></div></section>')
     return page(f"자료 · {SITE_TITLE}", '<span class="eyebrow">Data</span><h1>자료의 출처</h1>', body, current="data.html")
 
 
@@ -384,7 +387,7 @@ def build(logs: Path = LOGS, out: Path = SITE, quiet: bool = False) -> Path:
     shutil.copy2(HERE / "assets" / "site.css", out / "site.css")
 
     (out / "index.html").write_text(render_index(), encoding="utf-8")
-    (out / "data.html").write_text(render_data(), encoding="utf-8")
+    (out / "data.html").write_text(render_data(reports), encoding="utf-8")
     (out / "codebook.html").write_text(render_codebook(), encoding="utf-8")
     for report in reports:
         (out / "r" / f"{report.slug}.html").write_text(render_report(report), encoding="utf-8")

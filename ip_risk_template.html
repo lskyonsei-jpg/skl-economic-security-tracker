@@ -58,7 +58,6 @@ function linreg(pts){const n=pts.length;if(n<2)return null;const mx=pts.reduce((
 // 툴팁과 반환값에 남아 '무엇을 회귀한 것인가'를 흐렸다. 분모 자체가 시행국의
 // 공고 습관(부처별 반복 공고 습관, 지방정부 공고 수)에 좌우돼 지정학적 신호가
 // 아닌 잡음을 x축과 무관하게 y축에 실어 나른다. 분수는 전부 뺀다.
-// 지도·순위·추이의 risk_index는 정의상 비중 × 거리이므로 그대로 둔다.
 // 산점도는 ip_sectors.json(조치 단위 원자료)에서 매번 다시 집계한다(2026-08-24).
 // 기본으로 중복 제거(#DUP_RULE_20260824)만 걸고(부처별 하드코딩 예외는 없앴다), 화면에서 Targeted 만 따로 볼 수 있다.
 const IMP_CODE={'United States of America':0,'China':1};

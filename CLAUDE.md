@@ -5,7 +5,7 @@
 ## 현재 상태
 
 - 운영 구조와 화면 목록은 `README.md`. 사이트는 패널 2개(산업정책 트래커, 한미 AI 협력 트래커) + 판단 대기 + 자료 + 코드북.
-- 디자인 규칙은 `문서/20261022_디자인시스템.md`, 토큰은 `assets/site.css`. 화면 글자는 전부 20pt 이상(연구자 지시).
+- 디자인 규칙은 `문서/20261022_디자인시스템.md`, 토큰은 `assets/site.css`. 화면 글자는 본문 15pt·보조 13pt·차트 21px(연구자 재조정 2026-10-22). 페이지 틀은 `publish_site.page()` 하나.
 - 패널 2 자동화 설계는 `문서/20261022_설계_한미AI협력트래커_자동화.md`.
 - 원격 저장소: `https://github.com/lskyonsei-jpg/skl-economic-security-tracker`. 공개 사이트, GitHub Pages 호스팅, 상태는 GitHub Release `state` 자산.
 - 로컬 작업은 저장소를 스크래치패드에 clone 해서 한다. 연구자 볼트에 두지 않는다.
