@@ -1,4 +1,5 @@
-"""패널 2 — 한미 AI 협력 트래커 화면. data/ai_coop_events.json 을 읽어 site/ai_coop.html, site/ai_coop.json 을 만든다.
+"""패널 2 — 한미 AI 협력 트래커 화면. data/ai_coop_events.json 을 읽어 site/ai_coop.html(Dashboard), site/records.html(사건 목록),
+site/review.html(판단 대기), site/ai_coop.json, site/ai_coop_events.xlsx 를 만든다.
 
 사건 파일은 collect_ai_coop.py 가 만든다(seed: 연구자 확정 코딩 CSV, 이후 Task A/B 자동 수집). 파일이 없으면
 시드에서 즉석 생성한다. 2026-10-22 Notion 연동은 폐기했다(연구자 결정).
@@ -116,8 +117,8 @@ TITLE = "한미 AI 협력 트래커"
 
 
 def subnav(current: str) -> str:
-    """AI Cooperation 히어로 아래 탭: Dashboard(ai_coop.html) · Review(review.html)."""
-    tabs = [("ai_coop.html", "Dashboard"), ("review.html", "Review")]
+    """AI Cooperation 히어로 아래 탭: Dashboard(ai_coop.html) · Records(records.html) · Review(review.html)."""
+    tabs = [("ai_coop.html", "Dashboard"), ("records.html", "Records"), ("review.html", "Review")]
     cur = ' aria-current="page"'
     items = "".join(f'<a href="{h}"{cur if h == current else ""}>{t}</a>' for h, t in tabs)
     return f'<nav class="subnav">{items}</nav>'
@@ -177,11 +178,6 @@ def render(agg: dict, meta: dict) -> dict:
     <span class="eyebrow">Sector × Form</span>
     <div class="panel"><div class="panel-head">분야 × 형태 매트릭스</div><div class="panel-body" style="overflow-x:auto">{matrix_html}</div></div>
   </section>
-  <section class="section">
-    <span class="eyebrow">Records</span>
-    <div class="panel"><details class="records-toggle" id="records-box"><summary><span class="btn small"></span><span>사건 목록 {n}건 (최신순)</span><input id="q" type="search" placeholder="검색" onclick="event.preventDefault()"></summary>
-      <div class="tablebox"><div id="org-card"></div><table id="records"><thead><tr><th>날짜</th><th>제목</th><th>형태</th><th>분야</th><th>미국 측</th><th>한국 측</th><th>규모</th><th>상태</th></tr></thead><tbody></tbody></table></div></details></div>
-  </section>
 </div>
 <script>
 const FORMS={json.dumps(agg["forms"], ensure_ascii=False)};
@@ -205,32 +201,129 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   E.map((e,i)=>({{e,i,li:Math.max(FORMS.indexOf(e.form),0),cx:x(e.date)}})).sort((a,b)=>a.cx-b.cx).forEach(d=>{{
     const order=[0,1,-1,2,-2,3,-3]; let k=order.find(k=>!placed[d.li].some(q=>q.k===k&&Math.abs(q.cx-d.cx)<MINDX)); if(k===undefined)k=0;
     placed[d.li].push({{k,cx:d.cx}}); const yy=T+20+laneH*d.li+laneH/2+k*STEP;
-    s+=`<circle data-i="${{d.i}}" cx="${{d.cx}}" cy="${{yy}}" r="7" fill="${{FORM_COLOR[d.e.form]||css('--muted')}}" fill-opacity=".9"/>`;}});
+    s+=`<circle data-i="${{d.i}}" cx="${{d.cx}}" cy="${{yy}}" r="7" fill="${{FORM_COLOR[d.e.form]||css('--muted')}}" fill-opacity=".9" style="cursor:pointer"/>`;}});
   svg.innerHTML=s;
-  svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`<b>${{e.date}}</b><br>${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
+  svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`<b>${{e.date}}</b> ${{e.content}}<br>${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
   svg.addEventListener('mouseleave',()=>tip.style.display='none');
-  const tb=document.querySelector('#records tbody'); const esc=t=>String(t).replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}})[c]);
+  svg.addEventListener('click',ev=>{{const c=ev.target.closest('circle'); if(c) location.href='records.html#'+encodeURIComponent(E[+c.dataset.i].id);}});
+}});
+</script>'''
+    return spec | {"body": body}
+
+# ------------------------------------------------------------------ 사건 목록(records.html) · Excel
+
+# Excel 열 순서. 레코드에 이 밖의 키가 생기면 뒤에 이름순으로 붙는다(변수를 빼지 않는다).
+XLSX_ORDER = ["id", "date", "title", "summary", "us_parties", "kr_parties", "track", "track_original", "form", "sectors",
+              "amount_usd_bn", "amount_is_estimate", "amount_krw_bn", "lifecycle", "status", "administration",
+              "source_grade", "confidence", "prior_event_id", "coded_by", "coded_at", "model", "note", "sources", "updates"]
+XLSX_FILE = "ai_coop_events.xlsx"
+_ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _xlsx_cell(v):
+    """레코드 값 → 셀 값. 목록은 '; ' 로 잇고, 출처는 url(grade), updates 등 구조는 JSON 문자열로 둔다."""
+    if v is None or isinstance(v, (int, float, bool)):
+        return v
+    if isinstance(v, list):
+        if all(isinstance(x, str) for x in v):
+            return "; ".join(v)
+        if all(isinstance(x, dict) and "url" in x for x in v):
+            return "; ".join(f'{x.get("url", "")}' + (f' ({x["grade"]})' if x.get("grade") is not None else "") for x in v)
+        return json.dumps(v, ensure_ascii=False)
+    if isinstance(v, dict):
+        return json.dumps(v, ensure_ascii=False)
+    return _ILLEGAL.sub("", str(v))
+
+
+def write_xlsx(out: Path, as_of: str) -> int:
+    """data/ai_coop_events.json 의 사건 레코드를 변수 그대로 site/ai_coop_events.xlsx 에 쓴다(rejected 제외). 반환값은 행 수."""
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
+    raw = json.loads(EVENTS.read_text(encoding="utf-8")) if EVENTS.is_file() else {}
+    rows = [e for e in raw.get("events", []) if e.get("status") != "rejected" and e.get("date")]
+    rows.sort(key=lambda e: (e["date"], e.get("title", "")), reverse=True)
+    keys = {k for e in rows for k in e}
+    cols = [c for c in XLSX_ORDER if c in keys] + sorted(keys - set(XLSX_ORDER))
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "events"
+    ws.append(cols)
+    for r, e in enumerate(rows, start=2):
+        for j, c in enumerate(cols, start=1):
+            cell = ws.cell(row=r, column=j, value=_xlsx_cell(e.get(c)))
+            if isinstance(cell.value, str):
+                cell.data_type = "s"   # '=' 로 시작하는 문자열을 수식으로 읽지 않게
+    ws.freeze_panes = "A2"
+    for j, c in enumerate(cols, start=1):
+        width = max([len(c)] + [min(len(str(ws.cell(row=r, column=j).value or "")), 60) for r in range(2, len(rows) + 2)])
+        ws.column_dimensions[get_column_letter(j)].width = max(8, min(width + 2, 62))
+    meta = wb.create_sheet("meta")
+    for row in (("file", XLSX_FILE), ("source", "data/ai_coop_events.json"), ("as_of", as_of), ("n_events", len(rows)),
+                ("excluded", "status == rejected"), ("lists", "목록 값은 '; ' 로 이어 붙임. sources 는 url (grade). updates 는 JSON 문자열."),
+                ("codebook", "codebook.html#panel2")):
+        meta.append(row)
+    meta.column_dimensions["A"].width = 12
+    meta.column_dimensions["B"].width = 80
+    wb.save(out / XLSX_FILE)
+    return len(rows)
+
+
+# 표 열. (변수명, 셀 class). 값도 자료 그대로 보인다(한국어 라벨로 바꾸지 않는다 — 연구자 지시 2026-10-26).
+RECORD_COLS = [("date", "d"), ("title", ""), ("form", ""), ("sectors", ""), ("track", ""), ("us_parties", ""), ("kr_parties", ""),
+               ("amount_usd_bn", "num"), ("lifecycle", ""), ("status", "")]
+
+
+def render_records(agg: dict, meta: dict) -> dict:
+    """records.html 의 페이지 사양. 사건 목록 전체 표 + 검색 + 기관 현황 + Excel 다운로드."""
+    n = agg["n"]
+    asof = meta.get("fetched_at", "")[:10] or "—"
+    spec = {"file": "records.html", "title": f"사건 목록 · {TITLE} · SKL", "hero": hero("records.html"),
+            "current": "records.html", "asof": asof}
+    if n == 0:
+        return spec | {"body": '<div class="wrap section"><div class="empty">아직 사건 자료가 없습니다.</div></div>'}
+    head = "".join(f'<th{(" class=" + chr(34) + c + chr(34)) if c else ""}>{html.escape(k)}</th>' for k, c in RECORD_COLS)
+    body = f'''
+<div class="wrap">
+  <section class="section">
+    <span class="eyebrow">Records</span>
+    <div class="panel">
+      <div class="panel-head records-tools"><span>사건 목록 {n}건 (최신순)</span>
+        <span class="tools"><input id="q" type="search" placeholder="검색"><a class="btn small" href="{XLSX_FILE}" download>Excel 다운로드</a><a href="codebook.html#panel2">코드북</a></span></div>
+      <div class="tablebox" style="border:0;margin:0"><div id="org-card"></div>
+        <table id="records"><thead><tr>{head}</tr></thead><tbody></tbody></table></div>
+    </div>
+    <p class="note">열 이름은 자료 변수명 그대로. title 을 누르면 나머지 변수(id · administration · summary · note · prior_event_id · updates · sources · coded_by · confidence · source_grade)가 열린다. 기관명을 누르면 그 기관의 사건만 남는다.
+    Excel 은 <code>data/ai_coop_events.json</code> 의 레코드를 변수 전부 그대로 담는다(rejected 제외 · 목록 값은 "; " 로 이어 붙임 · as_of {html.escape(asof)}).</p>
+  </section>
+</div>
+<script>
+const FORMS={json.dumps(agg["forms"], ensure_ascii=False)};
+fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
+  const E=D.events; const tb=document.querySelector('#records tbody'); const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}})[c]);
   const ORGS=D.orgs||{{}}; let orgSel=null;
   const orgLink=n=>`<a href="#" class="org" data-org="${{esc(n)}}">${{esc(n)}}</a>`;
+  const amt=e=>e.amount_usd_bn==null?'':esc(e.amount_usd_bn)+(e.amount&&e.amount.includes('추정')?' <span class="small">(estimate)</span>':'');
   const detail=e=>{{const ups=(e.updates||[]).map(u=>`<li>${{esc(u.date||'')}} ${{esc(u.field||u.kind||'')}}${{u.old!==undefined?` ${{esc(u.old)}} → ${{esc(u.new)}}`:''}}${{u.evidence?` <span class="small">${{esc(u.evidence)}}</span>`:''}}</li>`).join('');
-    const srcs=(e.sources||[]).map((u,i)=>`<a href="${{esc(u)}}" target="_blank" rel="noopener">원문${{i?i+1:''}}</a>`).join(' · ');
-    return `<div class="ev-detail"><div class="ev-grid"><span>구분</span><span>${{esc(e.actor_type)}} · ${{e.status==='confirmed'?'연구자 확정':'모델 코딩'}}${{e.lifecycle?' · 진행 '+esc(e.lifecycle):''}}${{e.administration?' · '+esc(e.administration):''}}</span>`+
-      (e.summary?`<span>요약</span><span>${{esc(e.summary)}}</span>`:'')+(e.note?`<span>비고</span><span>${{esc(e.note)}}</span>`:'')+(e.amount?`<span>규모</span><span>${{esc(e.amount)}}</span>`:'')+
-      (e.prior_event_id?`<span>선행</span><span>${{esc((E.find(x=>x.id===e.prior_event_id)||{{}}).content||e.prior_event_id)}}</span>`:'')+
-      (ups?`<span>후속 갱신</span><span><ul class="ev-updates">${{ups}}</ul></span>`:'')+(srcs?`<span>출처</span><span>${{srcs}}</span>`:'')+`</div></div>`;}};
+    const srcs=(e.sources||[]).map((u,i)=>`<a href="${{esc(u)}}" target="_blank" rel="noopener">${{esc(u)}}</a>`).join('<br>');
+    const prior=e.prior_event_id?(E.find(x=>x.id===e.prior_event_id)||{{}}):null;
+    const row=(k,v)=>v?`<span>${{k}}</span><span>${{v}}</span>`:'';
+    return `<div class="ev-detail"><div class="ev-grid">`+row('id',esc(e.id))+row('administration',esc(e.administration))+row('summary',esc(e.summary))+row('note',esc(e.note))
+      +row('prior_event_id',prior?`<a href="#${{esc(e.prior_event_id)}}">${{esc(e.prior_event_id)}}</a> ${{esc(prior.content||'')}}`:'')
+      +row('updates',ups?`<ul class="ev-updates">${{ups}}</ul>`:'')+row('sources',srcs)
+      +row('coded_by',esc(e.coded_by))+row('confidence',e.confidence==null?'':esc(e.confidence))+row('source_grade',e.source_grade==null?'':esc(e.source_grade))+`</div></div>`;}};
   const draw=q=>{{const qq=(q||'').toLowerCase(); const rows=[...E].reverse().filter(e=>(!orgSel||e.us.includes(orgSel)||e.kr.includes(orgSel))&&(!qq||JSON.stringify(e).toLowerCase().includes(qq)));
-    tb.innerHTML=rows.map((e,i)=>`<tr class="ev-row" data-i="${{i}}" data-id="${{esc(e.id)}}"><td class="d">${{e.date}}</td><td><a href="#" class="ev-title">${{esc(e.content)}}</a></td><td>${{esc(e.form)}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{e.us.map(orgLink).join(', ')}}</td><td>${{e.kr.map(orgLink).join(', ')}}</td><td>${{esc(e.amount)}}</td><td><span class="chip" style="cursor:default">${{e.status==='confirmed'?'확정':'자동'}}</span></td></tr><tr class="ev-more" hidden><td colspan="8">${{detail(e)}}</td></tr>`).join('');
+    tb.innerHTML=rows.map((e,i)=>`<tr class="ev-row" data-i="${{i}}" data-id="${{esc(e.id)}}"><td class="d">${{e.date}}</td><td><a href="#" class="ev-title">${{esc(e.content)}}</a></td><td>${{esc(e.form)}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{esc(e.actor_type)}}</td><td>${{e.us.map(orgLink).join(', ')}}</td><td>${{e.kr.map(orgLink).join(', ')}}</td><td class="num">${{amt(e)}}</td><td>${{esc(e.lifecycle)}}</td><td>${{esc(e.status)}}</td></tr><tr class="ev-more" hidden><td colspan="${{{len(RECORD_COLS)}}}">${{detail(e)}}</td></tr>`).join('');
     const card=document.getElementById('org-card');
     if(orgSel){{const o=ORGS[orgSel]||{{}}; const forms={{}}; rows.forEach(e=>forms[e.form]=(forms[e.form]||0)+1); const partners={{}}; rows.forEach(e=>(e.us.includes(orgSel)?e.kr:e.us).forEach(p=>partners[p]=(partners[p]||0)+1));
       card.innerHTML=`<div class="org-box"><b>${{esc(orgSel)}}</b> <span class="small">${{o.type?esc(o.type)+' · ':''}}${{o.country?esc(o.country)+' · ':''}}사건 ${{rows.length}}건 · ${{FORMS.filter(f=>forms[f]).map(f=>f+' '+forms[f]).join(' · ')}}</span><br><span class="small">상대: ${{Object.entries(partners).sort((a,b)=>b[1]-a[1]).map(([p,n])=>orgLink(p)+' '+n).join(', ')||'-'}}</span> <button class="btn small" id="org-clear" type="button">전체 보기</button></div>`;
       document.getElementById('org-clear').onclick=()=>{{orgSel=null;draw(q);}};}} else card.innerHTML='';}};
   tb.addEventListener('click',ev=>{{const t=ev.target.closest('a.ev-title'); if(t){{ev.preventDefault(); const more=t.closest('tr').nextElementSibling; more.hidden=!more.hidden; return;}}
-    const o=ev.target.closest('a.org'); if(o){{ev.preventDefault(); orgSel=o.dataset.org; draw(document.getElementById('q').value); document.getElementById('records-box').open=true; document.getElementById('org-card').scrollIntoView({{block:'nearest'}});}}}});
+    const o=ev.target.closest('a.org'); if(o){{ev.preventDefault(); orgSel=o.dataset.org; draw(document.getElementById('q').value); document.getElementById('org-card').scrollIntoView({{block:'nearest'}});}}}});
   document.getElementById('org-card').addEventListener('click',ev=>{{const o=ev.target.closest('a.org'); if(o){{ev.preventDefault(); orgSel=o.dataset.org; draw(document.getElementById('q').value);}}}});
   draw(''); const q=document.getElementById('q');
   const goHash=()=>{{const h=decodeURIComponent(location.hash.slice(1)); if(!h)return; const tr=tb.querySelector(`tr[data-id="${{h.replace(/"/g,'')}}"]`); if(!tr)return;
-    document.getElementById('records-box').open=true; tr.nextElementSibling.hidden=false; tb.querySelectorAll('tr.hl').forEach(r=>r.classList.remove('hl')); tr.classList.add('hl'); tr.scrollIntoView({{block:'center'}});}};
-  goHash(); window.addEventListener('hashchange',goHash); q.addEventListener('input',ev=>{{draw(ev.target.value); if(ev.target.value) document.getElementById('records-box').open=true;}});
+    tr.nextElementSibling.hidden=false; tb.querySelectorAll('tr.hl').forEach(r=>r.classList.remove('hl')); tr.classList.add('hl'); tr.scrollIntoView({{block:'center'}});}};
+  goHash(); window.addEventListener('hashchange',goHash); q.addEventListener('input',ev=>draw(ev.target.value));
 }});
 </script>'''
     return spec | {"body": body}
@@ -268,10 +361,10 @@ def render_review(props: list[dict], events_by_id: dict) -> dict:
         return "없음" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
     def _new(v, field=None) -> str:   # 모델 판단 값. 그 항목을 비우자는 제안은 '값 삭제 권장'
         return "값 삭제 권장" if v in (None, "", [], "null") else _esc(", ".join(v) if isinstance(v, list) else v)
-    def ev_link(tgt: dict) -> str:   # 기존 사건 → 대시보드 사건 목록의 그 행으로 (a 태그라 Ctrl-클릭·가운데 클릭으로 새 탭)
+    def ev_link(tgt: dict) -> str:   # 기존 사건 → 사건 목록(records.html)의 그 행으로 (a 태그라 Ctrl-클릭·가운데 클릭으로 새 탭)
         if not tgt:
             return "기존: -"
-        return f'기존: <a class="ev-link" href="ai_coop.html#{_esc(tgt.get("id"))}" title="대시보드에서 이 사건 보기">{ev_line(tgt)}</a>'
+        return f'기존: <a class="ev-link" href="records.html#{_esc(tgt.get("id"))}" title="사건 목록에서 이 사건 보기">{ev_line(tgt)}</a>'
     def card(p: dict, title: str, meta: str, body: str) -> str:
         """한 줄 요약(제목·요지) + 결정 라디오를 항상 보이고, 상세는 '열기' 뒤에 둔다."""
         e = p.get("evidence", {})
@@ -380,7 +473,7 @@ def render_review(props: list[dict], events_by_id: dict) -> dict:
 
 
 def build(out: Path) -> list[dict]:
-    """ai_coop.json·review.json 을 쓰고 두 페이지의 사양을 돌려준다(HTML 은 publish_site 가 쓴다)."""
+    """ai_coop.json·review.json·ai_coop_events.xlsx 를 쓰고 세 페이지(Dashboard·Records·Review)의 사양을 돌려준다(HTML 은 publish_site 가 쓴다)."""
     events, meta = load_events()
     agg = aggregate(events)
     (out / "ai_coop.json").write_text(json.dumps({"as_of": meta["as_of"], "n": agg["n"], "events": events, "agg": agg, "orgs": load_orgs()},
@@ -388,8 +481,10 @@ def build(out: Path) -> list[dict]:
     props = pending_proposals()
     raw_by_id = {e["id"]: e for e in json.loads(EVENTS.read_text(encoding="utf-8")).get("events", [])} if EVENTS.is_file() else {}
     (out / "review.json").write_text(json.dumps({"pending": len(props), "by_task": {k: sum(1 for p in props if p["task"] == k) for k in "ABC"}}, ensure_ascii=False), encoding="utf-8")
-    print(f"[ai_coop_site] 사건 {agg['n']}건 (확정 {agg['status'].get('confirmed', 0)}, 자동 {agg['status'].get('auto', 0)})")
+    n_xlsx = write_xlsx(out, meta["as_of"])
+    print(f"[ai_coop_site] 사건 {agg['n']}건 (확정 {agg['status'].get('confirmed', 0)}, 자동 {agg['status'].get('auto', 0)}) · Excel {n_xlsx}행")
     return [render(agg, {"fetched_at": meta["as_of"]}),
+            render_records(agg, {"fetched_at": meta["as_of"]}),
             render_review(props, raw_by_id)]   # 원 레코드(track·sectors) 기준
 
 

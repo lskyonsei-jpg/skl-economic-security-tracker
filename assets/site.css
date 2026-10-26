@@ -276,13 +276,11 @@ input[type="checkbox"], input[type="radio"] { width: 22px; height: 22px; vertica
 .timeline-wrap { position: relative; }
 .timeline-wrap svg { min-height: 280px; }
 .tl-axis, .tl-admin { font-size: 20px; }
-.records-toggle { padding: 18px 20px; }
-.records-toggle summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.records-toggle summary::-webkit-details-marker { display: none; }
-.records-toggle summary .btn::before { content: "열기"; }
-.records-toggle[open] summary .btn::before { content: "닫기"; }
-.records-toggle .tablebox { margin-top: 16px; }
-#records { min-width: 1250px; }
+.records-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.records-tools .tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+#records { min-width: 1400px; }
+#records th { text-transform: none; letter-spacing: 0; font-family: ui-monospace, Consolas, monospace; }
+#records td.num { text-align: right; font-variant-numeric: tabular-nums; }
 #records td { vertical-align: top; }
 #records td.d { white-space: nowrap; }
 /* 코드북 */

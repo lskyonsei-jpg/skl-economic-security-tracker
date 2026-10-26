@@ -6,7 +6,7 @@ GitHub Pages 로 올린다(2026-10-22, Cloudflare Pages 에서 이전).
 
   site/
     index.html              랜딩(띠 + 패널 2개 + 최근 변경)
-    ip_risk.html, ai_coop.html, review.html, data.html
+    ip_risk.html, ai_coop.html, records.html, review.html, data.html
     codebook.html           문서/코드북_패널.md + 문서/코드북.md 를 접힌 절로
     r/<stamp>.html          변경 리포트 하나
 
@@ -85,7 +85,7 @@ class Report:
 # 페이지가 손으로 쓴 템플릿에 내비·푸터를 따로 들고 있어서, 다른 페이지에서 지운 Review 메뉴가 그 페이지에만 남았다.
 NAV = [("ip_risk.html", "Industrial Policy"), ("ai_coop.html", "AI Cooperation"),
        ("data.html", "Data"), ("codebook.html", "Codebook")]
-PANEL2_PAGES = ("ai_coop.html", "review.html")   # AI Cooperation 아래 Dashboard · Review 탭
+PANEL2_PAGES = ("ai_coop.html", "records.html", "review.html")   # AI Cooperation 아래 Dashboard · Records · Review 탭
 HOME_ICON = ('<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z" '
              'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>')
 
@@ -285,13 +285,13 @@ APIS = [
 def render_data(reports: list[Report]) -> str:
     repo = REPO_URL
     files = [("ip_risk.json", "패널 1 — 국가·연도별 BSV ideal point·블록·무역비중·GDP, 블록 구성"), ("ip_sectors.json", "패널 1 — 조치 단위 원자료(산점도·회귀)"),
-             ("ai_coop.json", "패널 2 — 사건 목록·집계·기관 목록")]
+             ("ai_coop.json", "패널 2 — 사건 목록·집계·기관 목록"), ("ai_coop_events.xlsx", "패널 2 — 사건 레코드 전체(변수 그대로, Excel)")]
     rows = "".join(f'<tr><td><a href="{f}" download>{f}</a></td><td>{html.escape(d)}</td></tr>' for f, d in files)
     api_rows = "".join(
         f'<tr><td>{html.escape(panel)}</td><td>{html.escape(n)}<span class="small">{html.escape(ep)}</span><span class="small">{html.escape(where)}</span></td>'
         f'<td>{html.escape(use)}</td><td>{html.escape(when)}</td><td>{html.escape(key)}</td></tr>'
         for panel, n, ep, use, when, key, where in APIS)
-    body = (f'<section class="section"><div class="wrap grid grid-2"><div class="panel"><div class="panel-head">사이트 JSON</div>'
+    body = (f'<section class="section"><div class="wrap grid grid-2"><div class="panel"><div class="panel-head">사이트 자료 파일</div>'
             f'<div class="panel-body"><table><tbody>{rows}</tbody></table></div></div>'
             f'<div class="panel"><div class="panel-head">저장소</div><div class="panel-body"><p><a href="{repo}">github.com/lskyonsei-jpg/skl-economic-security-tracker</a></p>'
             f'<p><a href="{repo}/releases/tag/state">Release “state”</a> — master.parquet(GTA 전량 + BERT 라벨), prediction_cache.json, state.json, 변경 리포트, 기준자료, AI 협력 사건 파일</p>'
