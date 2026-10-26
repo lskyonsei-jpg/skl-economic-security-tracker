@@ -4,8 +4,9 @@
   그 밖에는 ai_coop_tasks.py 가 라이브러리로 쓴다(프롬프트·스키마·본문 확보·기관 표기·track).
 
 모델: claude-opus-5-5, effort medium (연구자 확정 2026-10-22, 비교 실험 없이 medium 으로). 구조화 출력(output_config.format)으로 스키마를 강제한다.
-프롬프트 v2(2026-10-22): form 은 문서의 법적 성격 기준, track 은 정부-정부/정부-민간/민간-민간, 금액은 거래금액만,
-기사 하나에 사건 여러 개(events 배열), 기관 표기는 reference/ai_coop_orgs.csv 의 표준 표기.
+프롬프트 v3(2026-10-26): 레코드 = 거래(deal) 하나, lifecycle 은 거래가 도달한 단계(Rumour < Signed < Contracted < Operating < Completed),
+canceled 는 0/1, track 은 정부-정부/정부-민간/민간-민간, 금액은 거래금액만, 기사 하나에 거래 여러 개(events 배열),
+기관 표기는 reference/ai_coop_orgs.csv 의 표준 표기. 스키마 v2 — 2026-10-25 까지의 v1(사건 단위, form)은 migrate_doc() 이 변환한다.
 키:   환경변수 ANTHROPIC_API_KEY (GitHub Secrets). 비용 상한은 ai_coop_tasks.MAX_DAILY_CALLS.
 
 유료벽 3단계(연구자 결정 2026-10-22): 원문 본문 → 같은 사건의 다른 무료 출처(보도자료·정부 문서 우선) → 제목만(확신도 상한 0.5).
@@ -30,18 +31,24 @@ SEED_DIR = DATA / "seed"
 EVENTS = DATA / "ai_coop_events.json"
 MODEL = "claude-opus-5-5"
 
-FORMS = ["MOU·의향", "선언", "집행", "확정계약"]
+SCHEMA_VERSION = 2
+# 거래가 도달한 단계. 서열이며 올라가기만 한다(코드북 패널 2, 연구자 확정 2026-10-26).
+LIFECYCLES = ["Rumour", "Signed", "Contracted", "Operating", "Completed"]
+STAGE_DATE = {"Rumour": "date_rumour", "Signed": "date_signed", "Contracted": "date_contracted",
+              "Operating": "date_operating", "Completed": "date_completed"}
+# v1(2026-10-22~25) form → v2 lifecycle. 집행은 Operating 이 기본이고 인수 완료 2건만 Completed(MERGES 에서 지정).
+FORM_TO_LIFECYCLE = {"선언": "Rumour", "MOU·의향": "Signed", "확정계약": "Contracted", "집행": "Operating"}
 TRACKS = ["정부-정부", "정부-민간", "민간-민간"]
 ORGS = HERE / "reference" / "ai_coop_orgs.csv"
 SECTORS = ["AI데이터센터", "피지컬AI·로봇", "통상·규제", "파운드리", "반도체·메모리", "AI모델·SW", "안보·국방", "전력·인프라", "인재"]
 ADMINISTRATIONS = [("2025-01-20", "트럼프 2기"), ("2021-01-20", "바이든"), ("2017-01-20", "트럼프 1기"), ("2009-01-20", "오바마")]
-# 시스템 프롬프트 예시로 쓰는 표본 사건(연구자 확정). 정확도 측정에서는 제외한다.
+# 시스템 프롬프트 예시로 쓰는 표본 거래(연구자 확정). 정확도 측정에서는 제외한다.
 EXAMPLE_TITLES = [
     "삼성전자–테슬라 AI 칩 파운드리 계약(165억 달러)",
-    "현대차그룹–엔비디아 전략적 파트너십(CES 2025)",
-    "현대차·기아–엔비디아 자율주행 파트너십 확대",
-    "삼성 테일러 팭, 테슬라 칩 2027년 하반기 양산 계획",
-    "삼성전자–구글 클라우드 생성AI 파트너십(갤럭시 S24)",
+    "현대차그룹–엔비디아 전략적 파트너십(CES 2025, 2026 자율주행 확대)",
+    "현대차·기아, 오로라(Aurora) 자율주행 파트너십·전략적 투자",
+    "삼성전자, 하만 인수(80억 달러·자율주행 진출)",
+    "삼성전자–구글 클라우드 생성AI 파트너십(갤럭시 S24·볼리)",
     "한미 정상 공동성명(윤석열-바이든) — AI·반도체·자율로봇 협력 명시",
     "한미 차세대 핵심·신흥기술 대화(NCET) 출범",
     "AWS, 한국에 2027년까지 59억 달러 추가 투자 발표",
@@ -142,22 +149,43 @@ def load_seed_rows() -> list[dict]:
     return rows
 
 
+def _blank(v) -> str | None:
+    v = (v or "").strip()
+    return v or None
+
+
 def seed_to_events(rows: list[dict]) -> list[dict]:
+    """시드 CSV(v2, 거래 단위) → 레코드. 열: id, 일자, 미국 주체, 한국 주체, 원문 링크, 트랙, lifecycle, canceled,
+    date_rumour, date_signed, date_contracted, date_operating, date_completed, date_canceled, 분야, 내용, 규모(억 달러), 비고, merged_from."""
     events = []
     for r in rows:
-        amount = r.get("규모(억 달러)", "").strip()
+        if "lifecycle" not in r:
+            raise SystemExit(f"시드 CSV 가 v1(형태) 형식입니다. data/seed/archive/ 로 옮기고 v2 시드를 쓰세요: {list(r)[:8]}")
+        amount = (r.get("규모(억 달러)") or "").strip()
+        us, kr = split_parties(r["미국 주체"]), split_parties(r["한국 주체"])
+        lifecycle = r["lifecycle"].strip()
+        if lifecycle not in LIFECYCLES:
+            raise SystemExit(f"{r['id']}: lifecycle 값 오류 {lifecycle!r}")
+        stage_dates = {col: _blank(r.get(col)) for col in STAGE_DATE.values()}
+        if not stage_dates[STAGE_DATE[lifecycle]]:
+            raise SystemExit(f"{r['id']}: lifecycle={lifecycle} 인데 {STAGE_DATE[lifecycle]} 이 비어 있음")
+        date = min(d for d in stage_dates.values() if d)
+        sources = [{"url": u.strip(), "grade": None} for u in (r.get("원문 링크") or "").split("|") if u.strip()]
         events.append({
-            "id": r["id"], "date": r["일자"],
-            "us_parties": split_parties(r["미국 주체"]), "kr_parties": split_parties(r["한국 주체"]),
-            "track": derive_track(split_parties(r["미국 주체"]), split_parties(r["한국 주체"])) or "정부-민간",
-            "track_original": r["트랙"].strip(), "form": r["형태"].strip(), "sectors": split_parties(r["분야"]),
-            "title": r["내용"].strip(), "summary": "", "note": r.get("비고", "").strip(),
+            "schema_version": SCHEMA_VERSION,
+            "id": r["id"], "date": date,
+            "us_parties": us, "kr_parties": kr,
+            "track": derive_track(us, kr) or "정부-민간", "track_original": (r.get("트랙") or "").strip(),
+            "lifecycle": lifecycle, **stage_dates,
+            "canceled": int((r.get("canceled") or "0").strip() or 0), "date_canceled": _blank(r.get("date_canceled")),
+            "sectors": split_parties(r["분야"]),
+            "title": r["내용"].strip(), "summary": "", "note": (r.get("비고") or "").strip(),
             "amount_usd_bn": float(amount) if amount else None, "amount_is_estimate": False,
-            "sources": [{"url": r["원문 링크"].strip(), "grade": None}] if r.get("원문 링크", "").strip() else [],
-            "administration": administration(r["일자"]),
-            "status": "confirmed", "lifecycle": "announced", "confidence": 1.0,
-            "coded_by": "researcher", "coded_at": "2026-10-22", "model": None,
-            "prior_event_id": None, "updates": [],
+            "sources": sources,
+            "administration": administration(date),
+            "status": "confirmed", "confidence": 1.0,
+            "coded_by": "researcher", "coded_at": (r.get("coded_at") or "2026-10-26").strip(), "model": None,
+            "merged_from": split_parties(r.get("merged_from")), "updates": [],
         })
     events.sort(key=lambda e: (e["date"], e["title"]))
     return events
@@ -167,29 +195,165 @@ def cmd_seed() -> int:
     rows = load_seed_rows()
     events = seed_to_events(rows)
     DATA.mkdir(exist_ok=True)
-    EVENTS.write_text(json.dumps({"as_of": datetime.now(timezone.utc).isoformat(), "events": events},
+    EVENTS.write_text(json.dumps({"schema_version": SCHEMA_VERSION, "as_of": datetime.now(timezone.utc).isoformat(), "events": events},
                                  ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"[seed] {len(events)}건 -> {EVENTS.relative_to(HERE)}")
     return 0
 
 
+# ------------------------------------------------------------------ v1 → v2 변환 (2026-10-26, 거래 단위·lifecycle)
+# Release "state" 의 ai_coop_events.json 과 ai_coop_state.json 은 v1 으로 남아 있을 수 있다. 읽는 쪽(ai_coop_tasks·ai_coop_site)이
+# 매번 migrate_doc() 을 거치므로 어느 경로로 들어와도 같은 v2 레코드가 된다. 시드 CSV(v2)는 이 변환의 결과를 그대로 적은 것이다.
+
+# 같은 거래의 v1 사건들을 한 레코드로 합친다. 대표(keep)는 가장 이른 사건의 id. stages 는 {lifecycle: 날짜}.
+# 연구자 비고에 "선행 단계"·"별건 아님"·"확대"로 적힌 사슬만 합쳤다(코드북 패널 2, 2026-10-26).
+MERGES = [
+    {"keep": "20180104-9b646ac6", "absorb": ["20190613-90c71a99"],           # 현대차–오로라: CES 2018 파트너십 → 2019 지분 투자
+     "title": "현대차·기아, 오로라(Aurora) 자율주행 파트너십·전략적 투자", "lifecycle": "Contracted",
+     "stages": {"Signed": "2018-01-04", "Contracted": "2019-06-13"}},
+    {"keep": "20250109-324f33a6", "absorb": ["20260316-433e3f76"],           # 현대차–엔비디아: CES 2025 파트너십 → 2026-03 자율주행으로 확대(본계약은 별도 예정)
+     "title": "현대차그룹–엔비디아 전략적 파트너십(CES 2025, 2026 자율주행 확대)", "lifecycle": "Signed",
+     "stages": {"Signed": "2025-01-09"}},
+    {"keep": "20250728-26a1236c", "absorb": ["20260318-09476d05"],           # 삼성–테슬라: 계약 → 2026-03 양산 계획 보도(이행 시작 아님, note 로)
+     "lifecycle": "Contracted", "stages": {"Contracted": "2025-07-28"}},
+    {"keep": "20200702-27b1331c", "absorb": ["20230827-1ed3dca1"],           # SK하이닉스–엔비디아 HBM: 2020 HBM2E 양산 → 2023 주공급사(같은 공급 관계)
+     "title": "SK하이닉스–엔비디아 HBM 공급(2020 HBM2E 양산 개시 → 2023 주공급사)", "lifecycle": "Operating",
+     "stages": {"Operating": "2020-07-02"}},
+    {"keep": "20240118-838030b4", "absorb": ["20250409-9706968c"],           # 삼성–구글 클라우드: S24 출시 → 2025-04 볼리로 확대(같은 다년 파트너십)
+     "title": "삼성전자–구글 클라우드 생성AI 파트너십(갤럭시 S24·볼리)", "lifecycle": "Operating",
+     "stages": {"Operating": "2024-01-18"}},
+]
+# 합치지 않고 단계·날짜만 바로잡는 레코드. 인수 완료 2건은 Completed 이고, 계약 발표일을 변환 때 추가했다(출처 확인 요망 — note 에 표시).
+RESTAGE = {
+    "20170310-96cac345": {"title": "삼성전자, 하만 인수(80억 달러·자율주행 진출)", "lifecycle": "Completed",
+                                                     "stages": {"Contracted": "2016-11-14", "Completed": "2017-03-10"},
+                                                     "note_add": "[변환 2026-10-26] 인수 계약 발표일 2016-11-14(삼성 뉴스룸)를 date_contracted 로 추가. 확인 요망."},
+    "20210621-709e451f": {"title": "현대차그룹, 보스턴다이내믹스 지분 80% 인수(11억 달러)", "lifecycle": "Completed",
+                          "stages": {"Contracted": "2020-12-11", "Completed": "2021-06-21"},
+                          "note_add": "[변환 2026-10-26] 인수 계약 발표일 2020-12-11(현대차그룹 발표)을 date_contracted 로 추가. 확인 요망."},
+}
+
+
+def _v1_to_v2_record(e: dict) -> dict:
+    """v1 사건 하나 → v2 거래 레코드(합치기 전). form → lifecycle, 사건일 → 그 단계의 날짜."""
+    e = dict(e)
+    form = e.pop("form", None)
+    old_life = e.get("lifecycle")   # v1 진행 상태(announced … cancelled). 취소만 canceled 로 남긴다
+    lifecycle = FORM_TO_LIFECYCLE.get(form, "Rumour")
+    stages = {col: None for col in STAGE_DATE.values()}
+    stages[STAGE_DATE[lifecycle]] = e.get("date")
+    canceled = 1 if old_life == "cancelled" else 0
+    e.pop("prior_event_id", None); e.pop("prior_event_hint", None)
+    e.update({"schema_version": SCHEMA_VERSION, "lifecycle": lifecycle, **stages, "canceled": canceled, "date_canceled": None,
+              "merged_from": e.get("merged_from") or []})
+    e.setdefault("updates", []).append({"date": "2026-10-26", "field": "schema", "old": f"v1 form={form} lifecycle={old_life}",
+                                        "new": f"v2 lifecycle={lifecycle}", "evidence": "거래 단위·lifecycle 변환(연구자 결정 2026-10-26)"})
+    return e
+
+
+def migrate_doc(doc: dict) -> tuple[dict, bool]:
+    """사건 파일 전체를 v2 로. (문서, 바뀌었나). 이미 v2 면 그대로."""
+    if doc.get("schema_version") == SCHEMA_VERSION:
+        return doc, False
+    by_id = {e["id"]: _v1_to_v2_record(e) for e in doc.get("events", [])}
+    for m in MERGES:
+        keep = by_id.get(m["keep"])
+        if not keep:
+            continue
+        for aid in m["absorb"]:
+            a = by_id.pop(aid, None)
+            if not a:
+                continue
+            keep["merged_from"].append(aid)
+            keep["sources"] = (keep.get("sources") or []) + [s for s in (a.get("sources") or []) if s not in (keep.get("sources") or [])]
+            keep["note"] = (keep.get("note") or "") + f"\n[합침 {aid} · {a.get('date')} · {a.get('title')}] {a.get('note') or ''}".rstrip()
+            if a.get("amount_usd_bn") is not None and keep.get("amount_usd_bn") is None:
+                keep["amount_usd_bn"] = a["amount_usd_bn"]
+            for s in a.get("sectors") or []:
+                if s not in keep["sectors"]:
+                    keep["sectors"].append(s)
+            keep["updates"].append({"date": "2026-10-26", "field": "merged_from", "old": None, "new": aid, "evidence": "거래 단위 변환: 같은 거래의 후속 보도"})
+        _apply_stages(keep, m)
+    for rid, m in RESTAGE.items():
+        if rid in by_id:
+            _apply_stages(by_id[rid], m)
+            if m.get("note_add"):
+                by_id[rid]["note"] = (by_id[rid].get("note") or "") + "\n" + m["note_add"]
+    events = sorted(by_id.values(), key=lambda e: (e["date"], e["title"]))
+    return {"schema_version": SCHEMA_VERSION, "as_of": doc.get("as_of", ""), "events": events}, True
+
+
+def _apply_stages(e: dict, m: dict) -> None:
+    for col in STAGE_DATE.values():
+        e[col] = None
+    for stage, d in m["stages"].items():
+        e[STAGE_DATE[stage]] = d
+    e["lifecycle"] = m["lifecycle"]
+    if m.get("title"):
+        e["title"] = m["title"]
+    e["date"] = min(m["stages"].values())
+    e["administration"] = administration(e["date"])
+
+
+def migrate_state(state: dict) -> tuple[dict, bool]:
+    """제안 목록(ai_coop_state.json)의 v1 필드(form, prior_event_hint, follow_up/lifecycle 관계)를 v2 로. 미결 제안이 화면과 반영에서 깨지지 않게."""
+    if state.get("schema_version") == SCHEMA_VERSION:
+        return state, False
+    absorbed = {aid: m["keep"] for m in MERGES for aid in m["absorb"]}
+    def ev2(ev: dict) -> dict:
+        if not ev or "lifecycle" in ev and ev["lifecycle"] in LIFECYCLES:
+            return ev
+        ev = dict(ev)
+        ev["lifecycle"] = FORM_TO_LIFECYCLE.get(ev.pop("form", None), "Rumour")
+        ev.pop("prior_event_hint", None)
+        return ev
+    for p in state.get("proposals", []):
+        if p.get("target_id") in absorbed:
+            p["target_id"] = absorbed[p["target_id"]]
+        pl = p.get("payload") or {}
+        if p.get("task") == "A":
+            p["payload"] = ev2(pl)
+            for s in p.get("extra_sources") or []:
+                if "form" in s:
+                    s["lifecycle"] = FORM_TO_LIFECYCLE.get(s.pop("form"), None)
+            if p.get("form_variants"):
+                p["lifecycle_variants"] = [FORM_TO_LIFECYCLE.get(f, f) for f in p.pop("form_variants")]
+        elif p.get("task") == "B":
+            if pl.get("new_event"):
+                pl["new_event"] = ev2(pl["new_event"])
+            if pl.get("lifecycle") and pl["lifecycle"] not in LIFECYCLES:   # 옛 진행 상태 → 취소만 뜻이 남는다
+                pl["canceled"] = 1 if pl["lifecycle"] == "cancelled" else 0
+                pl["note_v1_lifecycle"] = pl.pop("lifecycle")
+            pl.setdefault("stage_date", None)
+        elif p.get("task") == "C":
+            for d in pl.get("diffs", []):
+                if d.get("field") == "form":
+                    d["field"] = "lifecycle"
+                    d["old"] = FORM_TO_LIFECYCLE.get(d.get("old"), d.get("old"))
+                    d["new"] = FORM_TO_LIFECYCLE.get(d.get("new"), d.get("new"))
+    state["schema_version"] = SCHEMA_VERSION
+    return state, True
+
+
 # ------------------------------------------------------------------ Task A 프롬프트
 
 
-SYSTEM_RULES = """당신은 한미 AI 협력 사건 데이터베이스의 코딩 보조자다. 기사 한 건을 읽고 스키마에 맞는 사건을 추출한다. 기사에 없는 사실을 만들지 않는다.
+SYSTEM_RULES = """당신은 한미 AI 협력 거래 데이터베이스의 코딩 보조자다. 기사 한 건을 읽고 스키마에 맞는 거래를 추출한다. 기사에 없는 사실을 만들지 않는다.
 
-[사건의 정의]
-미국 측 주체와 한국 측 주체가 모두 명시된, AI·반도체·데이터센터·로봇·자율주행·전장(차량 AI)·AI 규제 관련 협력 또는 거래. 한쪽만 있으면 사건이 아니다(events 를 빈 배열로). 미국 국내법·정책이 한국 기업에 영향을 주는 것(예: CHIPS Act)은 양측 주체가 있어도 form=선언, sectors 에 통상·규제를 넣는다.
+[거래의 정의 — 레코드 하나 = 거래 하나]
+미국 측 당사자와 한국 측 당사자가 모두 명시된, AI·반도체·데이터센터·로봇·자율주행·전장(차량 AI)·AI 규제 관련 협력 또는 상거래 하나. 한쪽만 있으면 거래가 아니다(events 를 빈 배열로). 미국 국내법·정책이 한국 기업에 영향을 주는 것(예: CHIPS Act)은 양측 주체가 있어도 lifecycle=Rumour, sectors 에 통상·규제를 넣는다.
 
-[기사 하나에 사건 여러 개]
-정상회담·서밋·패키지 발표처럼 한 기사가 여러 거래를 묶어 보도하면, 거래마다 사건 하나씩 events 배열에 넣는다(예: 정부 공동선언 1건 + 삼성–브로드컴 MOU 1건 + SK–엔비디아 협력 1건). 각 사건의 parties 에는 그 거래의 당사자만 넣고 기사에 등장한 다른 기관을 섞지 않는다. 묶음 전체를 하나의 우산 사건으로 만들지 않는다.
+[기사 하나에 거래 여러 개]
+정상회담·서밋·패키지 발표처럼 한 기사가 여러 거래를 묶어 보도하면, 거래마다 하나씩 events 배열에 넣는다(예: 정부 공동선언 1건 + 삼성–브로드컴 MOU 1건 + SK–엔비디아 협력 1건). 각 거래의 parties 에는 그 거래의 당사자만 넣고 기사에 등장한 다른 기관을 섞지 않는다. 묶음 전체를 하나의 우산 거래로 만들지 않는다.
 
-[form 판정 — 문서의 법적 성격 기준 (연구자 결정 2026-10-22)]
-- 확정계약: 구속력 있는 문서가 명시된 것. 계약 체결, 인수 계약, 지분 취득·투자 집행, 합작법인 설립, 장기 공급계약, 라이선스 계약, 본계약 서명, 파트너십 "협약(agreement) 체결". 금액이 없어도 인정한다.
-- MOU·의향: 비구속 문서(MOU·LOI·업무협약·양해각서·기본합의)이거나, "파트너십 발표·협력하기로·선정" 처럼 문서 종류가 특정되지 않은 협력 발표.
-- 집행: 앞선 구속력 거래의 이행·완료. 인수 완료, 지분 취득 완료, 양산 개시, 제품 출시, 공급 개시, 설비 착공. 기사가 그 거래의 첫 보도라도 "완료"면 집행이다. prior_event_hint 에 선행 거래를 적는다.
-- 선언: 정부 공동성명·팩트시트·회담·정상회의·협의체 출범, 기업의 투자 계획 발표(계약 상대가 없는 것).
-문면으로 가릴 수 없으면 더 약한 쪽(선언 < MOU·의향 < 집행 < 확정계약)을 고르고 confidence 를 낮춘다.
+[lifecycle 판정 — 거래가 이 기사 시점에 도달한 단계 (연구자 결정 2026-10-26). 다섯 값 가운데 하나]
+- Rumour: 거래가 공개됐으나 양측이 서명한 문서가 없다. 정부 공동성명·팩트시트·회담 결과·협의체 출범, 기업의 투자 계획·협력 의사 발표, "추진 중" 보도.
+- Signed: 양측이 서명한 비구속 문서. MOU·LOI·업무협약·양해각서·기본합의. 문서 종류가 특정되지 않았으나 양측이 공동 발표한 "파트너십·협력하기로·선정"도 여기(구속 조항이 확인되지 않으므로).
+- Contracted: 구속력 있는 문서 체결. 계약, 인수 계약, 지분 투자 계약, 합작법인 설립, 장기 공급계약, 라이선스 계약, 본계약, 협약(agreement) 체결. 구속 조항이 명시된 MOA·기본계약도 여기. 금액이 비공개여도 인정한다.
+- Operating: 이행이 실제로 시작됐다. 자금 집행(1차 납입), 착공, 양산 개시, 제품 출시·공급 개시, 서비스 개시. 기사가 그 거래의 첫 보도라도 이행이 시작됐으면 Operating 이다.
+- Completed: 거래가 약속한 산출이 완결됐다. 인수·지분 취득 종결(closing), 시설 준공·가동 개시, 투자금 전액 집행, 계약 물량 납품 완료, 공식 종료 선언. 끝이 정해지지 않은 공급·파트너십은 Operating 에 머문다.
+문면으로 가릴 수 없으면 낮은 단계(Rumour < Signed < Contracted < Operating < Completed)를 고르고 confidence 를 낮춘다. "예정·계획·목표"는 그 단계에 도달한 것이 아니다(2027년 양산 예정 → Operating 아님).
+[canceled] 기사가 그 거래의 철회·취소·무산·관계 종료를 전하면 true. 지연·축소는 false(note 에 적는다).
 
 [track — 양측 당사자의 성격 (연구자 결정 2026-10-22)]
 정부-정부(양쪽 모두 정부·공공기관) / 민간-민간(양쪽 모두 기업·민간) / 정부-민간(한쪽만 정부이거나 한쪽에 정부와 기업이 함께). 당사자만 보고 판정하며, 행사 주최·참석은 당사자가 아니다.
@@ -197,9 +361,9 @@ SYSTEM_RULES = """당신은 한미 AI 협력 사건 데이터베이스의 코딩
 [sectors] AI데이터센터, 피지컬AI·로봇, 통상·규제, 파운드리, 반도체·메모리, AI모델·SW, 안보·국방, 전력·인프라, 인재. 복수 가능. 기사에 근거가 있는 것만.
 [parties] 아래 [기관 표기] 목록의 표준 표기를 쓴다. 목록에 없으면 기사 표기 그대로. 정부는 "정부(미국)", "정부(한국)" 또는 부처명. 그룹은 기사에 나온 법인만(현대차그룹이면 명시된 계열사; 없으면 현대차).
 [amount_usd_bn] 거래금액만, 억 달러 숫자. 기업가치·시가총액·패키지 총액·투자 계획 총액은 금액이 아니라 note 에 적는다(연구자 결정 2026-10-22). 원화만 있으면 amount_krw_bn 에 억 원. 범위("수십억", "최대")면 null 로 두고 note 에 적는다.
-[date] 발표일(YYYY-MM-DD). 기사 게재일과 다르면 발표일.
-[title] 20자 안팎, "주체–주체, 내용(금액)" 형식. [summary] 2~3문장, 기사 사실만.
-[confidence] 0~1. form 판정과 주체 식별이 모두 분명하면 0.9 이상, 어느 하나가 기사 문면으로 확정되지 않으면 0.6 이하.
+[date] 그 단계에 도달한 발표일(YYYY-MM-DD). 기사 게재일과 다르면 발표일.
+[title] 20자 안팎, "주체–주체, 내용(금액)" 형식. 단계가 아니라 거래를 가리키는 이름으로 쓴다. [summary] 2~3문장, 기사 사실만.
+[confidence] 0~1. lifecycle 판정과 주체 식별이 모두 분명하면 0.9 이상, 어느 하나가 기사 문면으로 확정되지 않으면 0.6 이하.
 [source_grade] 기사가 정부·기업의 1차 발표(보도자료·공시·공식 뉴스룸)면 1, 언론 보도면 2.
 
 [기관 표기]
@@ -215,7 +379,8 @@ EVENT_SCHEMA = {
         "us_parties": {"type": "array", "items": {"type": "string"}},
         "kr_parties": {"type": "array", "items": {"type": "string"}},
         "track": {"anyOf": [{"type": "string", "enum": TRACKS}, {"type": "null"}]},
-        "form": {"anyOf": [{"type": "string", "enum": FORMS}, {"type": "null"}]},
+        "lifecycle": {"anyOf": [{"type": "string", "enum": LIFECYCLES}, {"type": "null"}]},
+        "canceled": {"type": "boolean"},
         "sectors": {"type": "array", "items": {"type": "string", "enum": SECTORS}},
         "title": {"type": "string"},
         "summary": {"type": "string"},
@@ -223,13 +388,11 @@ EVENT_SCHEMA = {
         "amount_is_estimate": {"type": "boolean"},
         "amount_krw_bn": {"anyOf": [{"type": "number"}, {"type": "null"}]},
         "source_grade": {"type": "integer", "enum": [1, 2]},
-        "prior_event_hint": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "confidence": {"type": "number"},
         "note": {"type": "string"},
     },
-    "required": ["date", "us_parties", "kr_parties", "track", "form", "sectors", "title", "summary",
-                 "amount_usd_bn", "amount_is_estimate", "amount_krw_bn", "source_grade", "prior_event_hint",
-                 "confidence", "note"],
+    "required": ["date", "us_parties", "kr_parties", "track", "lifecycle", "canceled", "sectors", "title", "summary",
+                 "amount_usd_bn", "amount_is_estimate", "amount_krw_bn", "source_grade", "confidence", "note"],
     "additionalProperties": False,
 }
 
@@ -255,8 +418,10 @@ def build_system(events: list[dict]) -> str:
         e = by_title.get(title)
         if not e:
             continue
-        answer = {"is_event": True, "date": e["date"], "us_parties": e["us_parties"], "kr_parties": e["kr_parties"],
-                  "track": e["track"], "form": e["form"], "sectors": e["sectors"], "title": e["title"],
+        # 예시의 date 는 그 거래가 처음 관측된 단계의 날짜(거래 레코드의 date). lifecycle 은 그 시점의 단계 = 레코드의 첫 단계.
+        first_stage = next((s for s in LIFECYCLES if e.get(STAGE_DATE[s]) == e["date"]), e["lifecycle"])
+        answer = {"date": e["date"], "us_parties": e["us_parties"], "kr_parties": e["kr_parties"],
+                  "track": e["track"], "lifecycle": first_stage, "canceled": bool(e.get("canceled")), "sectors": e["sectors"], "title": e["title"],
                   "amount_usd_bn": e["amount_usd_bn"]}
         parts.append(f"예시 {i}. 기사 요지: {e['note'][:400]}\n정답: {json.dumps(answer, ensure_ascii=False)}\n")
     return "\n".join(parts)

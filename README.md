@@ -11,8 +11,8 @@
 |---|---|---|
 | `index.html` | 랜딩 — 핵심 수치, 패널 2개, 판단 대기 배너, 최근 변경 리포트 | `publish_site.py` |
 | `ip_risk.html` 패널 1 | Distortive Industrial Policy Tracker — GTA(매일 API) × BSV ideal point × IMF DOTS·WDI. 산점도·회귀, 블록 구성 (지도·순위·추이·HS 필터는 2026-10-22 삭제) | `ip_risk_site.py`(자료) + `ip_risk_template.html`(패널 CSS·본문·스크립트) |
-| `ai_coop.html` 패널 2 | 한미 AI 협력 트래커 Dashboard — 타임라인(점 클릭 → 사건 목록의 그 행), 형태별·주체 조합·분야×형태 집계 | `ai_coop_site.py` |
-| `records.html` | 사건 목록 — 열 이름은 변수명 그대로. title 클릭 → 나머지 변수(summary·note·prior_event_id·updates·sources 등), 기관명 클릭 → 그 기관의 현황. `ai_coop_events.xlsx`(레코드 전체, rejected 제외) 다운로드 | `ai_coop_site.py` |
+| `ai_coop.html` 패널 2 | 한미 AI 협력 트래커 Dashboard — 거래 타임라인(단계별 날짜, 같은 거래는 선으로 연결, 점 클릭 → 거래 목록의 그 행), 단계(lifecycle)별 건수, 이행 사다리(첫 관측 단계 → 현재 단계), 분야×단계, 주체 조합 | `ai_coop_site.py` |
+| `records.html` | 거래 목록(레코드 1개 = 거래 1건, 스키마 v2 2026-10-26) — 열 이름은 변수명 그대로(lifecycle·canceled 포함). title 클릭 → 나머지 변수(단계별 날짜·summary·note·merged_from·updates·sources 등), 기관명 클릭 → 그 기관의 현황. `ai_coop_events.xlsx`(레코드 전체, rejected 제외) 다운로드 | `ai_coop_site.py` |
 | `review.html` | 판단 대기 — 자동 제안(A 새 사건·B 갱신·C 재검토)에 승인·기각·보류를 적어 GitHub Issue 로 제출 | `ai_coop_site.py` |
 | `data.html` | 사이트 JSON, 저장소, 연결된 API 목록, GTA 변경 리포트 목록 | `publish_site.py` (`APIS`) |
 | `codebook.html` | 화면 산식·코딩 규칙(`문서/코드북_패널.md`) + GTA 열 정의(`문서/코드북.md`) | `publish_site.py` |

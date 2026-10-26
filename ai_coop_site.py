@@ -5,7 +5,8 @@ site/review.html(판단 대기), site/ai_coop.json, site/ai_coop_events.xlsx 를
 시드에서 즉석 생성한다. 2026-10-22 Notion 연동은 폐기했다(연구자 결정).
 
 원칙
-- 분석 단위는 사건 하나. count 와 share 를 같이 쓰고 분모는 전체 사건 수다.
+- 분석 단위는 거래(deal) 하나(스키마 v2, 2026-10-26). count 와 share 를 같이 쓰고 분모는 전체 거래 수다.
+- lifecycle(Rumour < Signed < Contracted < Operating < Completed)은 거래가 도달한 단계, canceled 는 0/1. 단계별 날짜 열로 이력을 그린다.
 - status(confirmed/auto/rejected) 를 화면에 그대로 보인다. 모델 코딩을 확정 라벨처럼 보이지 않게 한다.
 - 금액은 명시된 억 달러만 쓰고 추정치는 합산하지 않는다.
 """
@@ -17,10 +18,13 @@ import re
 from collections import Counter
 from pathlib import Path
 
+import collect_ai_coop as cc
+
 HERE = Path(__file__).resolve().parent
 EVENTS = HERE / "data" / "ai_coop_events.json"
 REPO = "lskyonsei-jpg/skl-economic-security-tracker"
-FORM_ORDER = ["선언", "MOU·의향", "집행", "확정계약"]   # 약한 것부터 (연구자 지시 2026-10-22)
+STAGES = cc.LIFECYCLES                     # 낮은 단계부터
+STAGE_DATE = cc.STAGE_DATE
 # 미국 행정부 경계(타임라인 세로선). 취임일 기준.
 ADMINISTRATIONS = [("오바마", "2009-01-20"), ("트럼프 1기", "2017-01-20"), ("바이든", "2021-01-20"), ("트럼프 2기", "2025-01-20")]
 
@@ -52,26 +56,30 @@ def load_events() -> tuple[list[dict], dict]:
             collect_ai_coop.cmd_seed()
     if not EVENTS.is_file():
         return [], {"as_of": ""}
-    raw = json.loads(EVENTS.read_text(encoding="utf-8"))
+    raw, _ = cc.migrate_doc(json.loads(EVENTS.read_text(encoding="utf-8")))   # Release 자산이 v1 이어도 화면은 v2 로
     events = []
     for e in raw.get("events", []):
         if e.get("status") == "rejected" or not e.get("date"):
             continue
         amt = e.get("amount_usd_bn")
+        stage_dates = {col: e.get(col) for col in STAGE_DATE.values()}
+        first_stage = next((s for s in STAGES if stage_dates[STAGE_DATE[s]] == e["date"]), e.get("lifecycle"))
         events.append({
             "id": e["id"], "date": e["date"][:10],
             "us": [disp(x) for x in e.get("us_parties", [])], "kr": [disp(x) for x in e.get("kr_parties", [])],
-            "actor_type": e.get("track") or "미분류", "form": e.get("form") or "미분류",
+            "actor_type": e.get("track") or "미분류",
+            "lifecycle": e.get("lifecycle") or "Rumour", "first_stage": first_stage, "canceled": int(e.get("canceled") or 0),
+            **stage_dates, "date_canceled": e.get("date_canceled"),
             "sector": e.get("sectors") or ["미분류"],
             "content": e.get("title", ""), "summary": e.get("summary", ""),
             "amount": (f"{amt:g}억 달러" + (" (추정)" if e.get("amount_is_estimate") else "")) if amt is not None else "",
-            "amount_usd_bn": amt,
+            "amount_usd_bn": amt, "amount_is_estimate": bool(e.get("amount_is_estimate")),
             "url": (e.get("sources") or [{}])[0].get("url", ""), "sources": [x.get("url", "") for x in (e.get("sources") or []) if x.get("url")],
             "updates": e.get("updates", []), "coded_by": e.get("coded_by", ""),
             "source_grade": (e.get("sources") or [{}])[0].get("grade"),
-            "status": e.get("status", "auto"), "lifecycle": e.get("lifecycle", ""),
+            "status": e.get("status", "auto"),
             "confidence": e.get("confidence"), "administration": e.get("administration", ""),
-            "prior_event_id": e.get("prior_event_id"), "note": e.get("note", ""),
+            "merged_from": e.get("merged_from") or [], "note": e.get("note", ""),
         })
     events.sort(key=lambda x: (x["date"], x["content"]))
     return events, {"as_of": raw.get("as_of", "")}
@@ -79,33 +87,41 @@ def load_events() -> tuple[list[dict], dict]:
 
 def aggregate(events: list[dict]) -> dict:
     n = len(events)
-    forms = [f for f in FORM_ORDER if any(e["form"] == f for e in events)]
-    forms += sorted({e["form"] for e in events} - set(forms))
+    stages = list(STAGES)
     sectors = sorted({s for e in events for s in e["sector"]})
     years = sorted({e["date"][:4] for e in events})
 
-    by_year_form = {y: Counter() for y in years}
+    by_year_stage = {y: Counter() for y in years}
     for e in events:
-        by_year_form[e["date"][:4]][e["form"]] += 1
+        by_year_stage[e["date"][:4]][e["lifecycle"]] += 1
     matrix = {s: Counter() for s in sectors}
     for e in events:
         for s in e["sector"]:
-            matrix[s][e["form"]] += 1
+            matrix[s][e["lifecycle"]] += 1
     pairs = Counter()
     for e in events:
         for u in e["us"] or ["(미국 측 미기재)"]:
             for k in e["kr"] or ["(한국 측 미기재)"]:
                 pairs[(u, k)] += 1
     actor_type = Counter(e["actor_type"] for e in events)
+    # 이행 사다리: 첫 관측 단계 → 현재 단계. 대각선 위가 레코드 안에서 단계가 오른 거래.
+    ladder = {a: Counter() for a in stages}
+    for e in events:
+        ladder[e["first_stage"] or e["lifecycle"]][e["lifecycle"]] += 1
+    progressed = sum(1 for e in events if e["first_stage"] and STAGES.index(e["lifecycle"]) > STAGES.index(e["first_stage"]))
     return {
-        "n": n, "forms": forms, "sectors": sectors, "years": years,
-        "by_year_form": {y: dict(c) for y, c in by_year_form.items()},
+        "n": n, "stages": stages, "sectors": sectors, "years": years,
+        "by_year_stage": {y: dict(c) for y, c in by_year_stage.items()},
         "matrix": {s: dict(c) for s, c in matrix.items()},
         "pairs": [{"us": u, "kr": k, "n": c} for (u, k), c in pairs.most_common(30)],
         "actor_type": dict(actor_type),
-        "form_total": dict(Counter(e["form"] for e in events)),
+        "stage_total": dict(Counter(e["lifecycle"] for e in events)),
+        "ladder": {a: dict(c) for a, c in ladder.items()}, "progressed": progressed,
+        "canceled": sum(e["canceled"] for e in events),
         "status": dict(Counter(e["status"] for e in events)),
-        "amount_confirmed_total": round(sum(e["amount_usd_bn"] for e in events if e["amount_usd_bn"] and e["form"] == "확정계약"), 1),
+        # 구속력 있는 단계(Contracted 이상)의 명시 금액 합계. 추정치 제외
+        "amount_contracted_total": round(sum(e["amount_usd_bn"] for e in events
+                                             if e["amount_usd_bn"] and not e["amount_is_estimate"] and STAGES.index(e["lifecycle"]) >= STAGES.index("Contracted")), 1),
     }
 
 
@@ -141,23 +157,36 @@ def render(agg: dict, meta: dict) -> dict:
     def pct(c: int) -> str:
         return f"{c / n * 100:.1f}%"
 
-    # 매트릭스(분야 x 형태)
-    head = "".join(f'<th class="num">{html.escape(f)}</th>' for f in agg["forms"])
+    # 매트릭스(분야 x 단계)
+    head = "".join(f'<th class="num">{html.escape(f)}</th>' for f in agg["stages"])
     rows = []
     for s in agg["sectors"]:
         cells = "".join(
             f'<td class="cell">{agg["matrix"][s].get(f, 0)}<small>{pct(agg["matrix"][s].get(f, 0))}</small></td>'
-            for f in agg["forms"])
+            for f in agg["stages"])
         total = sum(agg["matrix"][s].values())
         rows.append(f'<tr><td>{html.escape(s)}</td>{cells}<td class="cell"><b>{total}</b><small>{pct(total)}</small></td></tr>')
     matrix_html = (f'<table class="matrix"><thead><tr><th>분야</th>{head}<th class="num">합계</th></tr></thead>'
                    f'<tbody>{"".join(rows)}</tbody></table>'
-                   f'<p class="note">건수 · 전체 {n}건 대비 비중. 여러 분야에 걸친 사건은 분야마다 집계.</p>')
+                   f'<p class="note">건수 · 전체 {n}건 대비 비중. 여러 분야에 걸친 거래는 분야마다 집계. 단계는 현재 도달 단계(lifecycle).</p>')
 
-    # 형태별 막대
+    # 단계별 막대
     bars = "".join(
-        f'<div class="row"><span>{html.escape(f)}</span><div><div class="bar" style="width:{agg["form_total"].get(f, 0) / n * 100:.1f}%"></div></div>'
-        f'<span class="n">{agg["form_total"].get(f, 0)} · {pct(agg["form_total"].get(f, 0))}</span></div>' for f in agg["forms"])
+        f'<div class="row"><span>{html.escape(f)}</span><div><div class="bar" style="width:{agg["stage_total"].get(f, 0) / n * 100:.1f}%"></div></div>'
+        f'<span class="n">{agg["stage_total"].get(f, 0)} · {pct(agg["stage_total"].get(f, 0))}</span></div>' for f in agg["stages"])
+    bars += (f'<p class="note">현재 도달 단계 기준. 취소 {agg["canceled"]}건은 단계를 유지한 채 canceled=1. '
+             f'Contracted 이상의 명시 금액 합계 {agg["amount_contracted_total"]:g}억 달러(추정치 제외).</p>')
+
+    # 이행 사다리: 첫 관측 단계(행) → 현재 단계(열)
+    lhead = "".join(f'<th class="num">{html.escape(f)}</th>' for f in agg["stages"])
+    lrows = []
+    for a in agg["stages"]:
+        row_total = sum(agg["ladder"][a].values())
+        cells = "".join(f'<td class="cell{" up" if agg["stages"].index(b) > agg["stages"].index(a) and agg["ladder"][a].get(b, 0) else ""}">{agg["ladder"][a].get(b, 0) or ""}</td>' for b in agg["stages"])
+        lrows.append(f'<tr><td>{html.escape(a)}</td>{cells}<td class="cell"><b>{row_total}</b></td></tr>')
+    ladder_html = (f'<table class="matrix"><thead><tr><th>첫 관측 ↓ · 현재 →</th>{lhead}<th class="num">합계</th></tr></thead><tbody>{"".join(lrows)}</tbody></table>'
+                   f'<p class="note">대각선 위(색칠)가 레코드 안에서 단계가 오른 거래 {agg["progressed"]}건. 거래는 처음 보도된 단계로 들어오므로 '
+                   f'Contracted 에서 시작한 거래는 그 앞 단계가 관측되지 않은 것이지 건너뛴 것이 아니다. 최근 거래는 아직 오를 시간이 없었다(우측 절단).</p>')
 
     pairs = "".join(
         f'<li><span>{html.escape(p["us"])}</span><span class="arrow">↔</span><span>{html.escape(p["kr"])}</span><span class="n">{p["n"]}</span></li>'
@@ -167,43 +196,49 @@ def render(agg: dict, meta: dict) -> dict:
 <div class="wrap">
   <section class="section">
     <span class="eyebrow">Timeline</span>
-    <div class="panel"><div class="panel-head"><span>사건 타임라인</span><span id="tl-legend" class="legend"></span><a href="codebook.html#panel2">코드북</a></div>
-      <div class="panel-body timeline-wrap"><svg id="timeline" viewBox="0 0 1000 420" aria-label="한미 AI 협력 사건 타임라인"></svg><div id="tl-tip" class="tooltip"></div></div></div>
+    <div class="panel"><div class="panel-head"><span>거래 타임라인 — 단계별 날짜, 같은 거래는 선으로 연결</span><span id="tl-legend" class="legend"></span><a href="codebook.html#panel2">코드북</a></div>
+      <div class="panel-body timeline-wrap"><svg id="timeline" viewBox="0 0 1000 440" aria-label="한미 AI 협력 거래 타임라인"></svg><div id="tl-tip" class="tooltip"></div></div></div>
   </section>
   <section class="section grid grid-2">
-    <div><span class="eyebrow">Form</span><div class="panel"><div class="panel-head">형태별 건수 · 비중 (분모 {n}건)</div><div class="panel-body bars">{bars}</div></div></div>
-    <div><span class="eyebrow">Actors</span><div class="panel"><div class="panel-head">미국 주체 ↔ 한국 주체 (상위 15 조합)</div><div class="panel-body"><ul class="pairs" style="list-style:none;margin:0;padding:0">{pairs}</ul></div></div></div>
+    <div><span class="eyebrow">Lifecycle</span><div class="panel"><div class="panel-head">단계별 건수 · 비중 (분모 {n}건)</div><div class="panel-body bars">{bars}</div></div></div>
+    <div><span class="eyebrow">Ladder</span><div class="panel"><div class="panel-head">이행 사다리 — 첫 관측 단계 → 현재 단계</div><div class="panel-body" style="overflow-x:auto">{ladder_html}</div></div></div>
   </section>
-  <section class="section">
-    <span class="eyebrow">Sector × Form</span>
-    <div class="panel"><div class="panel-head">분야 × 형태 매트릭스</div><div class="panel-body" style="overflow-x:auto">{matrix_html}</div></div>
+  <section class="section grid grid-2">
+    <div><span class="eyebrow">Sector × Lifecycle</span><div class="panel"><div class="panel-head">분야 × 단계 매트릭스</div><div class="panel-body" style="overflow-x:auto">{matrix_html}</div></div></div>
+    <div><span class="eyebrow">Actors</span><div class="panel"><div class="panel-head">미국 주체 ↔ 한국 주체 (상위 15 조합)</div><div class="panel-body"><ul class="pairs" style="list-style:none;margin:0;padding:0">{pairs}</ul></div></div></div>
   </section>
 </div>
 <script>
-const FORMS={json.dumps(agg["forms"], ensure_ascii=False)};
+const STAGES={json.dumps(agg["stages"], ensure_ascii=False)};
+const STAGE_DATE={json.dumps(STAGE_DATE, ensure_ascii=False)};
 const ADMIN={json.dumps(ADMINISTRATIONS, ensure_ascii=False)};
 const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-const FORM_COLOR={{}};FORMS.forEach((f,i)=>FORM_COLOR[f]=css('--cat-'+(i+1)));
+const STAGE_COLOR={{}};STAGES.forEach((f,i)=>STAGE_COLOR[f]=css('--cat-'+(i+1)));
 fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   const E=D.events; const tip=document.getElementById('tl-tip');
-  document.getElementById('tl-legend').innerHTML=FORMS.map(f=>`<span><i style="background:${{FORM_COLOR[f]}}"></i>${{f}}</span>`).join('');
-  const svg=document.getElementById('timeline'); const W=1000,H=420,L=150,R=24,T=44,B=50;
-  const t0=new Date(E[0].date+'T00:00:00Z'), t1=new Date(E[E.length-1].date+'T00:00:00Z');
-  const y0=t0.getUTCFullYear(), y1=t1.getUTCFullYear()+1;
+  document.getElementById('tl-legend').innerHTML=STAGES.map(f=>`<span><i style="background:${{STAGE_COLOR[f]}}"></i>${{f}}</span>`).join('')+`<span><i style="background:transparent;border:2px solid ${{css('--ink')}}"></i>canceled</span>`;
+  const svg=document.getElementById('timeline'); const W=1000,H=440,L=150,R=24,T=44,B=50;
+  const allDates=E.flatMap(e=>STAGES.map(s=>e[STAGE_DATE[s]]).filter(Boolean)).sort();
+  const y0=+allDates[0].slice(0,4), y1=+allDates[allDates.length-1].slice(0,4)+1;
   const x=d=>L+(new Date(d+'T00:00:00Z')-Date.UTC(y0,0,1))/(Date.UTC(y1,0,1)-Date.UTC(y0,0,1))*(W-L-R);
   let s='';
   for(let y=y0;y<=y1;y++){{const xx=x(y+'-01-01');s+=`<line x1="${{xx}}" x2="${{xx}}" y1="${{T}}" y2="${{H-B}}" stroke="${{css('--line')}}"/>`; if((y-y0)%2===0||y1-y0<8) s+=`<text class="tl-axis" x="${{xx+4}}" y="${{H-B+26}}">${{y}}</text>`;}}
   ADMIN.forEach(([name,d])=>{{const yy=d.slice(0,4); if(yy<y0||yy>y1)return; const xx=x(d); s+=`<line x1="${{xx}}" x2="${{xx}}" y1="${{T-14}}" y2="${{H-B}}" stroke="${{css('--ink')}}" stroke-dasharray="3 3"/><text class="tl-admin" x="${{xx+6}}" y="${{T-2}}">${{name}}</text>`;}});
-  const lanes=FORMS.length, laneH=(H-T-B-20)/Math.max(lanes,1);
-  FORMS.forEach((f,i)=>{{const yy=T+20+laneH*i+laneH/2; s+=`<text class="tl-axis" x="${{L-10}}" y="${{yy+8}}" text-anchor="end">${{f}}</text>`;}});
-  // 같은 줄에서 가로로 16 단위 안에 있는 점은 위아래 칸(±16)으로 비켜 놓는다 — 점마다 따로 집을 수 있게 (연구자 지시 2026-10-23)
-  const placed=FORMS.map(()=>[]); const STEP=16, MINDX=16;
-  E.map((e,i)=>({{e,i,li:Math.max(FORMS.indexOf(e.form),0),cx:x(e.date)}})).sort((a,b)=>a.cx-b.cx).forEach(d=>{{
-    const order=[0,1,-1,2,-2,3,-3]; let k=order.find(k=>!placed[d.li].some(q=>q.k===k&&Math.abs(q.cx-d.cx)<MINDX)); if(k===undefined)k=0;
-    placed[d.li].push({{k,cx:d.cx}}); const yy=T+20+laneH*d.li+laneH/2+k*STEP;
-    s+=`<circle data-i="${{d.i}}" cx="${{d.cx}}" cy="${{yy}}" r="7" fill="${{FORM_COLOR[d.e.form]||css('--muted')}}" fill-opacity=".9" style="cursor:pointer"/>`;}});
+  const lanes=STAGES.length, laneH=(H-T-B-20)/Math.max(lanes,1);
+  STAGES.forEach((f,i)=>{{const yy=T+20+laneH*i+laneH/2; s+=`<text class="tl-axis" x="${{L-10}}" y="${{yy+8}}" text-anchor="end">${{f}}</text>`;}});
+  // 거래마다 단계 날짜가 있는 칸에 점을 찍고 같은 거래의 점은 선으로 잇는다. 같은 줄에서 가로로 16 단위 안에 있는 점은
+  // 위아래 칸(±16)으로 비켜 놓는다 — 점마다 따로 집을 수 있게 (연구자 지시 2026-10-23)
+  const placed=STAGES.map(()=>[]); const STEP=16, MINDX=16; const pts=[];
+  E.forEach((e,i)=>STAGES.forEach((st,li)=>{{const d=e[STAGE_DATE[st]]; if(d) pts.push({{e,i,st,li,cx:x(d),d}});}}));
+  pts.sort((a,b)=>a.cx-b.cx).forEach(p=>{{
+    const order=[0,1,-1,2,-2,3,-3]; let k=order.find(k=>!placed[p.li].some(q=>q.k===k&&Math.abs(q.cx-p.cx)<MINDX)); if(k===undefined)k=0;
+    placed[p.li].push({{k,cx:p.cx}}); p.cy=T+20+laneH*p.li+laneH/2+k*STEP;}});
+  const byDeal={{}}; pts.forEach(p=>(byDeal[p.i]=byDeal[p.i]||[]).push(p));
+  Object.values(byDeal).forEach(ps=>{{ps.sort((a,b)=>a.li-b.li); for(let j=1;j<ps.length;j++) s+=`<line x1="${{ps[j-1].cx}}" y1="${{ps[j-1].cy}}" x2="${{ps[j].cx}}" y2="${{ps[j].cy}}" stroke="${{css('--ink-2')}}" stroke-width="1.5" stroke-opacity=".6"/>`;}});
+  pts.forEach(p=>{{const cur=p.st===p.e.lifecycle; const fill=STAGE_COLOR[p.st]||css('--muted');
+    s+=`<circle data-i="${{p.i}}" data-st="${{p.st}}" data-d="${{p.d}}" cx="${{p.cx}}" cy="${{p.cy}}" r="${{cur?7:5}}" fill="${{p.e.canceled?'transparent':fill}}" stroke="${{p.e.canceled?css('--ink'):fill}}" stroke-width="2" fill-opacity="${{cur?'.95':'.55'}}" style="cursor:pointer"/>`;}});
   svg.innerHTML=s;
-  svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`<b>${{e.date}}</b> ${{e.content}}<br>${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
+  svg.addEventListener('mousemove',ev=>{{const c=ev.target.closest('circle'); if(!c){{tip.style.display='none';return;}} const e=E[+c.dataset.i]; tip.innerHTML=`<b>${{c.dataset.d}}</b> ${{c.dataset.st}}${{e.canceled?' · canceled':''}}<br>${{e.content}}<br>${{e.us.join(', ')}} ↔ ${{e.kr.join(', ')}}`; const r=svg.parentElement.getBoundingClientRect(); tip.style.left=(ev.clientX-r.left+12)+'px'; tip.style.top=(ev.clientY-r.top+12)+'px'; tip.style.display='block';}});
   svg.addEventListener('mouseleave',()=>tip.style.display='none');
   svg.addEventListener('click',ev=>{{const c=ev.target.closest('circle'); if(c) location.href='records.html#'+encodeURIComponent(E[+c.dataset.i].id);}});
 }});
@@ -213,9 +248,10 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
 # ------------------------------------------------------------------ 사건 목록(records.html) · Excel
 
 # Excel 열 순서. 레코드에 이 밖의 키가 생기면 뒤에 이름순으로 붙는다(변수를 빼지 않는다).
-XLSX_ORDER = ["id", "date", "title", "summary", "us_parties", "kr_parties", "track", "track_original", "form", "sectors",
-              "amount_usd_bn", "amount_is_estimate", "amount_krw_bn", "lifecycle", "status", "administration",
-              "source_grade", "confidence", "prior_event_id", "coded_by", "coded_at", "model", "note", "sources", "updates"]
+XLSX_ORDER = ["id", "date", "title", "lifecycle", "canceled", "date_rumour", "date_signed", "date_contracted", "date_operating", "date_completed", "date_canceled",
+              "us_parties", "kr_parties", "track", "track_original", "sectors", "amount_usd_bn", "amount_is_estimate", "amount_krw_bn",
+              "summary", "note", "status", "administration", "source_grade", "confidence", "coded_by", "coded_at", "model",
+              "merged_from", "sources", "updates", "schema_version"]
 XLSX_FILE = "ai_coop_events.xlsx"
 _ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
@@ -239,7 +275,7 @@ def write_xlsx(out: Path, as_of: str) -> int:
     """data/ai_coop_events.json 의 사건 레코드를 변수 그대로 site/ai_coop_events.xlsx 에 쓴다(rejected 제외). 반환값은 행 수."""
     from openpyxl import Workbook
     from openpyxl.utils import get_column_letter
-    raw = json.loads(EVENTS.read_text(encoding="utf-8")) if EVENTS.is_file() else {}
+    raw, _ = cc.migrate_doc(json.loads(EVENTS.read_text(encoding="utf-8"))) if EVENTS.is_file() else ({}, False)
     rows = [e for e in raw.get("events", []) if e.get("status") != "rejected" and e.get("date")]
     rows.sort(key=lambda e: (e["date"], e.get("title", "")), reverse=True)
     keys = {k for e in rows for k in e}
@@ -269,15 +305,15 @@ def write_xlsx(out: Path, as_of: str) -> int:
 
 
 # 표 열. (변수명, 셀 class). 값도 자료 그대로 보인다(한국어 라벨로 바꾸지 않는다 — 연구자 지시 2026-10-26).
-RECORD_COLS = [("date", "d"), ("title", ""), ("form", ""), ("sectors", ""), ("track", ""), ("us_parties", ""), ("kr_parties", ""),
-               ("amount_usd_bn", "num"), ("lifecycle", ""), ("status", "")]
+RECORD_COLS = [("date", "d"), ("title", ""), ("lifecycle", ""), ("canceled", "num"), ("sectors", ""), ("track", ""), ("us_parties", ""), ("kr_parties", ""),
+               ("amount_usd_bn", "num"), ("status", "")]
 
 
 def render_records(agg: dict, meta: dict) -> dict:
     """records.html 의 페이지 사양. 사건 목록 전체 표 + 검색 + 기관 현황 + Excel 다운로드."""
     n = agg["n"]
     asof = meta.get("fetched_at", "")[:10] or "—"
-    spec = {"file": "records.html", "title": f"사건 목록 · {TITLE} · SKL", "hero": hero("records.html"),
+    spec = {"file": "records.html", "title": f"거래 목록 · {TITLE} · SKL", "hero": hero("records.html"),
             "current": "records.html", "asof": asof}
     if n == 0:
         return spec | {"body": '<div class="wrap section"><div class="empty">아직 사건 자료가 없습니다.</div></div>'}
@@ -287,17 +323,18 @@ def render_records(agg: dict, meta: dict) -> dict:
   <section class="section">
     <span class="eyebrow">Records</span>
     <div class="panel">
-      <div class="panel-head records-tools"><span>사건 목록 {n}건 (최신순)</span>
+      <div class="panel-head records-tools"><span>거래 목록 {n}건 (최신순)</span>
         <span class="tools"><input id="q" type="search" placeholder="검색"><a class="btn small" href="{XLSX_FILE}" download>Excel 다운로드</a><a href="codebook.html#panel2">코드북</a></span></div>
       <div class="tablebox" style="border:0;margin:0"><div id="org-card"></div>
         <table id="records"><thead><tr>{head}</tr></thead><tbody></tbody></table></div>
     </div>
-    <p class="note">열 이름은 자료 변수명 그대로. title 을 누르면 나머지 변수(id · administration · summary · note · prior_event_id · updates · sources · coded_by · confidence · source_grade)가 열린다. 기관명을 누르면 그 기관의 사건만 남는다.
+    <p class="note">레코드 하나 = 거래 하나. 열 이름은 자료 변수명 그대로. title 을 누르면 나머지 변수(id · 단계별 날짜 date_rumour…date_completed · date_canceled · administration · summary · note · merged_from · updates · sources · coded_by · confidence · source_grade)가 열린다. 기관명을 누르면 그 기관의 거래만 남는다.
     Excel 은 <code>data/ai_coop_events.json</code> 의 레코드를 변수 전부 그대로 담는다(rejected 제외 · 목록 값은 "; " 로 이어 붙임 · as_of {html.escape(asof)}).</p>
   </section>
 </div>
 <script>
-const FORMS={json.dumps(agg["forms"], ensure_ascii=False)};
+const STAGES={json.dumps(agg["stages"], ensure_ascii=False)};
+const STAGE_DATE={json.dumps(STAGE_DATE, ensure_ascii=False)};
 fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   const E=D.events; const tb=document.querySelector('#records tbody'); const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}})[c]);
   const ORGS=D.orgs||{{}}; let orgSel=null;
@@ -305,17 +342,18 @@ fetch('ai_coop.json',{{cache:'no-store'}}).then(r=>r.json()).then(D=>{{
   const amt=e=>e.amount_usd_bn==null?'':esc(e.amount_usd_bn)+(e.amount&&e.amount.includes('추정')?' <span class="small">(estimate)</span>':'');
   const detail=e=>{{const ups=(e.updates||[]).map(u=>`<li>${{esc(u.date||'')}} ${{esc(u.field||u.kind||'')}}${{u.old!==undefined?` ${{esc(u.old)}} → ${{esc(u.new)}}`:''}}${{u.evidence?` <span class="small">${{esc(u.evidence)}}</span>`:''}}</li>`).join('');
     const srcs=(e.sources||[]).map((u,i)=>`<a href="${{esc(u)}}" target="_blank" rel="noopener">${{esc(u)}}</a>`).join('<br>');
-    const prior=e.prior_event_id?(E.find(x=>x.id===e.prior_event_id)||{{}}):null;
     const row=(k,v)=>v?`<span>${{k}}</span><span>${{v}}</span>`:'';
-    return `<div class="ev-detail"><div class="ev-grid">`+row('id',esc(e.id))+row('administration',esc(e.administration))+row('summary',esc(e.summary))+row('note',esc(e.note))
-      +row('prior_event_id',prior?`<a href="#${{esc(e.prior_event_id)}}">${{esc(e.prior_event_id)}}</a> ${{esc(prior.content||'')}}`:'')
+    const stages=STAGES.map(st=>e[STAGE_DATE[st]]?`${{st}} ${{esc(e[STAGE_DATE[st]])}}`:null).filter(Boolean).join(' → ');
+    return `<div class="ev-detail"><div class="ev-grid">`+row('id',esc(e.id))+row('stages',stages)+row('date_canceled',esc(e.date_canceled))+row('administration',esc(e.administration))
+      +row('summary',esc(e.summary))+row('note',esc(e.note).replace(/\\n/g,'<br>'))
+      +row('merged_from',(e.merged_from||[]).map(esc).join(', '))
       +row('updates',ups?`<ul class="ev-updates">${{ups}}</ul>`:'')+row('sources',srcs)
       +row('coded_by',esc(e.coded_by))+row('confidence',e.confidence==null?'':esc(e.confidence))+row('source_grade',e.source_grade==null?'':esc(e.source_grade))+`</div></div>`;}};
   const draw=q=>{{const qq=(q||'').toLowerCase(); const rows=[...E].reverse().filter(e=>(!orgSel||e.us.includes(orgSel)||e.kr.includes(orgSel))&&(!qq||JSON.stringify(e).toLowerCase().includes(qq)));
-    tb.innerHTML=rows.map((e,i)=>`<tr class="ev-row" data-i="${{i}}" data-id="${{esc(e.id)}}"><td class="d">${{e.date}}</td><td><a href="#" class="ev-title">${{esc(e.content)}}</a></td><td>${{esc(e.form)}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{esc(e.actor_type)}}</td><td>${{e.us.map(orgLink).join(', ')}}</td><td>${{e.kr.map(orgLink).join(', ')}}</td><td class="num">${{amt(e)}}</td><td>${{esc(e.lifecycle)}}</td><td>${{esc(e.status)}}</td></tr><tr class="ev-more" hidden><td colspan="${{{len(RECORD_COLS)}}}">${{detail(e)}}</td></tr>`).join('');
+    tb.innerHTML=rows.map((e,i)=>`<tr class="ev-row" data-i="${{i}}" data-id="${{esc(e.id)}}"><td class="d">${{e.date}}</td><td><a href="#" class="ev-title">${{esc(e.content)}}</a></td><td>${{esc(e.lifecycle)}}</td><td class="num">${{e.canceled?1:0}}</td><td>${{esc(e.sector.join(', '))}}</td><td>${{esc(e.actor_type)}}</td><td>${{e.us.map(orgLink).join(', ')}}</td><td>${{e.kr.map(orgLink).join(', ')}}</td><td class="num">${{amt(e)}}</td><td>${{esc(e.status)}}</td></tr><tr class="ev-more" hidden><td colspan="${{{len(RECORD_COLS)}}}">${{detail(e)}}</td></tr>`).join('');
     const card=document.getElementById('org-card');
-    if(orgSel){{const o=ORGS[orgSel]||{{}}; const forms={{}}; rows.forEach(e=>forms[e.form]=(forms[e.form]||0)+1); const partners={{}}; rows.forEach(e=>(e.us.includes(orgSel)?e.kr:e.us).forEach(p=>partners[p]=(partners[p]||0)+1));
-      card.innerHTML=`<div class="org-box"><b>${{esc(orgSel)}}</b> <span class="small">${{o.type?esc(o.type)+' · ':''}}${{o.country?esc(o.country)+' · ':''}}사건 ${{rows.length}}건 · ${{FORMS.filter(f=>forms[f]).map(f=>f+' '+forms[f]).join(' · ')}}</span><br><span class="small">상대: ${{Object.entries(partners).sort((a,b)=>b[1]-a[1]).map(([p,n])=>orgLink(p)+' '+n).join(', ')||'-'}}</span> <button class="btn small" id="org-clear" type="button">전체 보기</button></div>`;
+    if(orgSel){{const o=ORGS[orgSel]||{{}}; const st={{}}; rows.forEach(e=>st[e.lifecycle]=(st[e.lifecycle]||0)+1); const partners={{}}; rows.forEach(e=>(e.us.includes(orgSel)?e.kr:e.us).forEach(p=>partners[p]=(partners[p]||0)+1));
+      card.innerHTML=`<div class="org-box"><b>${{esc(orgSel)}}</b> <span class="small">${{o.type?esc(o.type)+' · ':''}}${{o.country?esc(o.country)+' · ':''}}거래 ${{rows.length}}건 · ${{STAGES.filter(f=>st[f]).map(f=>f+' '+st[f]).join(' · ')}}</span><br><span class="small">상대: ${{Object.entries(partners).sort((a,b)=>b[1]-a[1]).map(([p,n])=>orgLink(p)+' '+n).join(', ')||'-'}}</span> <button class="btn small" id="org-clear" type="button">전체 보기</button></div>`;
       document.getElementById('org-clear').onclick=()=>{{orgSel=null;draw(q);}};}} else card.innerHTML='';}};
   tb.addEventListener('click',ev=>{{const t=ev.target.closest('a.ev-title'); if(t){{ev.preventDefault(); const more=t.closest('tr').nextElementSibling; more.hidden=!more.hidden; return;}}
     const o=ev.target.closest('a.org'); if(o){{ev.preventDefault(); orgSel=o.dataset.org; draw(document.getElementById('q').value); document.getElementById('org-card').scrollIntoView({{block:'nearest'}});}}}});
@@ -337,7 +375,7 @@ STATE_FILE = HERE / "data" / "ai_coop_state.json"
 def pending_proposals() -> list[dict]:
     if not STATE_FILE.is_file():
         return []
-    st = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    st, _ = cc.migrate_state(json.loads(STATE_FILE.read_text(encoding="utf-8")))   # Release 자산이 v1 이어도 카드는 v2 로
     return [p for p in st.get("proposals", []) if p.get("status") == "proposed"]
 
 
@@ -351,10 +389,12 @@ def render_review(props: list[dict], events_by_id: dict) -> dict:
     hero_meta = (f'<div class="meta"><div>판단 대기<b>{len(props)}건</b></div><div>A 새 사건<b>{len(by_task["A"])}</b></div>'
             f'<div>B 갱신<b>{len(by_task["B"])}</b></div><div>C 재검토<b>{len(by_task["C"])}</b></div></div>')
     def ev_line(ev: dict) -> str:
-        return (f'{_esc(ev.get("date"))} · {_esc(ev.get("form"))} · {_esc(ev.get("track"))} · {_esc(", ".join(ev.get("sectors", [])))} · '
-                f'금액 {_esc(ev.get("amount_usd_bn"))} · conf {_esc(ev.get("confidence"))}')
-    FIELD_KO = {"amount_usd_bn": "금액(억 달러)", "amount_krw_bn": "금액(억 원)", "form": "형태", "track": "track", "sectors": "분야", "date": "날짜",
-                "title": "제목", "us_parties": "미국 측", "kr_parties": "한국 측", "lifecycle": "진행 상태", "summary": "요약"}
+        return (f'{_esc(ev.get("date"))} · {_esc(ev.get("lifecycle"))}{" · canceled" if ev.get("canceled") in (1, True) else ""} · {_esc(ev.get("track"))} · '
+                f'{_esc(", ".join(ev.get("sectors", [])))} · 금액 {_esc(ev.get("amount_usd_bn"))} · conf {_esc(ev.get("confidence"))}')
+    FIELD_KO = {"amount_usd_bn": "금액(억 달러)", "amount_krw_bn": "금액(억 원)", "lifecycle": "단계(lifecycle)", "canceled": "취소(canceled)", "track": "track",
+                "sectors": "분야", "date": "날짜", "title": "제목", "us_parties": "미국 측", "kr_parties": "한국 측", "summary": "요약",
+                "date_rumour": "date_rumour", "date_signed": "date_signed", "date_contracted": "date_contracted", "date_operating": "date_operating",
+                "date_completed": "date_completed", "date_canceled": "date_canceled"}
     def _lab(field) -> str:
         return FIELD_KO.get(field, _esc(field))
     def _old(v) -> str:   # 기존 판단 값. 비어 있으면 '없음'
@@ -396,9 +436,9 @@ def render_review(props: list[dict], events_by_id: dict) -> dict:
                 more = p.get("extra_sources") or []
                 if more:
                     extra += '<p class="small">같은 거래를 다룬 다른 기사 ' + str(len(more)) + '건: ' + " · ".join(
-                        f'<a href="{_esc(m.get("url"))}" target="_blank" rel="noopener">{_esc((m.get("title") or "")[:30])}</a>' + (f' ({_esc(m.get("form"))}, {_esc(m.get("confidence"))})' if m.get("form") else '') for m in more) + '</p>'
-                if p.get("form_variants"):
-                    extra += f'<p class="small">다른 기사의 form 판정: {_esc(", ".join(sorted(set(p["form_variants"]))))}</p>'
+                        f'<a href="{_esc(m.get("url"))}" target="_blank" rel="noopener">{_esc((m.get("title") or "")[:30])}</a>' + (f' ({_esc(m.get("lifecycle"))}, {_esc(m.get("confidence"))})' if m.get("lifecycle") else '') for m in more) + '</p>'
+                if p.get("lifecycle_variants"):
+                    extra += f'<p class="small">다른 기사의 단계 판정: {_esc(", ".join(sorted(set(str(v) for v in p["lifecycle_variants"]))))}</p>'
                 title, meta = _esc(ev.get("title")), ev_line(ev)
                 body = (f'<p>미국 측 {_esc(", ".join(disp(x) for x in ev.get("us_parties", [])))} / 한국 측 {_esc(", ".join(disp(x) for x in ev.get("kr_parties", [])))}</p>'
                         f'<p>{_esc(ev.get("summary"))}</p><p class="note">모델 메모: {_esc(ev.get("note"))}</p>{extra}')
@@ -406,18 +446,24 @@ def render_review(props: list[dict], events_by_id: dict) -> dict:
                 pl = p["payload"]; tgt = events_by_id.get(p.get("target_id"), {}); ex = p.get("explain") or {}
                 if k == "B":
                     title = f'갱신: {_esc(p.get("target_title"))}'
-                    what = "후속 사건 추가" if pl.get("new_event") else (f'진행 상태 → {_esc(pl.get("lifecycle"))}' if pl.get("lifecycle") else "필드 갱신")
+                    what = ("새 거래 추가" if pl.get("new_event") else
+                            (f'단계 → {_esc(pl.get("lifecycle"))}' + (f' ({_esc(pl.get("stage_date"))})' if pl.get("stage_date") else "") if pl.get("lifecycle") else
+                             ("취소(canceled=1)" if pl.get("canceled") else "필드 갱신")))
                     meta = f'{what} · conf {_esc(p.get("confidence"))}'
                 else:
                     title = f'재검토: {_esc(p.get("target_title"))}'
                     meta = ""   # 표와 중복이라 비움 (연구자 지시 2026-10-23)
                 rec = []
                 if pl.get("new_event"):
-                    rec.append(f'<p>후속 사건 추가: <b>{_esc(pl["new_event"].get("title"))}</b> — {ev_line(pl["new_event"])}</p>')
+                    rec.append(f'<p>새 거래 추가(같은 당사자의 별개 거래): <b>{_esc(pl["new_event"].get("title"))}</b> — {ev_line(pl["new_event"])}</p>')
                 for u in pl.get("updates", []):
                     rec.append(f'<p><b>{_lab(u.get("field"))}</b> 기존 판단 {_old(u.get("old"))} → 모델 판단 {_new(u.get("new"), u.get("field"))}<br><span class="small">{_esc(u.get("evidence"))}</span></p>')
                 if pl.get("lifecycle"):
-                    rec.append(f'<p>진행 상태: {_esc(tgt.get("lifecycle") or "announced")} → <b>{_esc(pl["lifecycle"])}</b></p>')
+                    rec.append(f'<p>단계: {_esc(tgt.get("lifecycle") or "Rumour")} → <b>{_esc(pl["lifecycle"])}</b>' + (f' · 도달일 {_esc(pl.get("stage_date"))}' if pl.get("stage_date") else "") + '</p>')
+                if pl.get("canceled"):
+                    rec.append(f'<p>취소: canceled 0 → <b>1</b>' + (f' · 보도일 {_esc(pl.get("stage_date"))}' if pl.get("stage_date") else "") + f' (단계 {_esc(tgt.get("lifecycle"))} 유지)</p>')
+                if pl.get("note_v1_lifecycle"):
+                    rec.append(f'<p class="small">변환 전(v1) 제안 값: 진행 상태 {_esc(pl["note_v1_lifecycle"])}</p>')
                 if pl.get("diffs"):
                     rows = "".join(f'<tr><td>{_lab(d.get("field"))}</td><td>{_old(d.get("old"))}</td><td>{_new(d.get("new"), d.get("field"))}</td><td class="small">{_esc(d.get("reason"))}</td></tr>' for d in pl["diffs"])
                     rec.append(f'<table><thead><tr><th>항목</th><th>기존 판단</th><th>모델 판단</th><th>기사 근거</th></tr></thead><tbody>{rows}</tbody></table>')
@@ -482,7 +528,7 @@ def build(out: Path) -> list[dict]:
     raw_by_id = {e["id"]: e for e in json.loads(EVENTS.read_text(encoding="utf-8")).get("events", [])} if EVENTS.is_file() else {}
     (out / "review.json").write_text(json.dumps({"pending": len(props), "by_task": {k: sum(1 for p in props if p["task"] == k) for k in "ABC"}}, ensure_ascii=False), encoding="utf-8")
     n_xlsx = write_xlsx(out, meta["as_of"])
-    print(f"[ai_coop_site] 사건 {agg['n']}건 (확정 {agg['status'].get('confirmed', 0)}, 자동 {agg['status'].get('auto', 0)}) · Excel {n_xlsx}행")
+    print(f"[ai_coop_site] 거래 {agg['n']}건 (확정 {agg['status'].get('confirmed', 0)}, 자동 {agg['status'].get('auto', 0)}) · Excel {n_xlsx}행")
     return [render(agg, {"fetched_at": meta["as_of"]}),
             render_records(agg, {"fetched_at": meta["as_of"]}),
             render_review(props, raw_by_id)]   # 원 레코드(track·sectors) 기준

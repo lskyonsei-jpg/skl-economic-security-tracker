@@ -216,6 +216,7 @@ ul.changes li .d { font-variant-numeric: tabular-nums; }
 .tl-admin { font-size: 11px; fill: var(--ink-2); letter-spacing: 1.5px; text-transform: uppercase; }
 .matrix td.cell { text-align: right; font-variant-numeric: tabular-nums; }
 .matrix td.cell small { display: block; color: var(--muted); font-size: 11px; }
+.matrix td.cell.up { background: var(--mint); font-weight: 600; }
 .bars { display: grid; gap: 8px; }
 .bars .row { display: grid; grid-template-columns: 110px 1fr 60px; gap: 10px; align-items: center; font-size: 13px; }
 .bars .bar { height: 14px; background: var(--seq-3); }

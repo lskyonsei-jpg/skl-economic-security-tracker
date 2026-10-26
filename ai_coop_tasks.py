@@ -4,12 +4,13 @@
   python ai_coop_tasks.py apply    판단 대기 페이지에서 제출한 결정(GitHub Issue, 보조로 data/ai_coop_decisions.csv)을 사건 파일에 반영한다
 
 세 절
-  A. 새 사건 후보   RSS 질의(최근 2일) → 기관 마스터로 1차 필터 → Task A 코딩 → 제안
-  B·C. 기존 사건 점검  확정 사건 전부를 매일 검색 → 처음 보는 기사만 모델이 기존 레코드와 비교 → 후속·진행 상태 변화면 B(갱신),
+  A. 새 거래 후보   RSS 질의(최근 2일) → 기관 마스터로 1차 필터 → Task A 코딩 → 제안
+  B·C. 기존 거래 점검  확정 거래 전부를 매일 검색 → 처음 보는 기사만 모델이 기존 레코드와 비교 → 단계 상향·취소·별개 새 거래면 B(갱신),
                       기사의 사실이 기존 코딩과 다르면 C(재검토). 설명은 세 부분(왜 다시 보나 / 기존 ↔ 검색 결과 / 권장 수정안). (2026-10-23)
 
-제안 id: A-YYYY-MM-DD-nn, B-…, C-…. 승인된 A 는 사건 추가(status=confirmed, coded_by=model, approved_by=researcher),
-B 는 후속 사건 추가 또는 lifecycle 변경, C 는 필드 정정(CORRECTABLE 에 있는 필드만). 모든 반영은 updates[] 에 근거와 함께 남는다.
+제안 id: A-YYYY-MM-DD-nn, B-…, C-…. 승인된 A 는 거래 추가(status=confirmed, coded_by=model, approved_by=researcher),
+B 는 같은 레코드의 lifecycle 상향(+ 단계 날짜) 또는 canceled=1, 드물게 별개 새 거래 추가. C 는 필드 정정(CORRECTABLE 에 있는 필드만).
+모든 반영은 updates[] 에 근거와 함께 남는다. (스키마 v2, 2026-10-26: 레코드 = 거래, form 폐지)
 track 은 승인·정정 때 기관 마스터(reference/ai_coop_orgs.csv)의 type 으로 다시 정한다.
 
 비용 상한: 하루 MAX_DAILY_CALLS 회. 상한에 닿으면 남은 작업은 다음 날로.
@@ -64,6 +65,9 @@ def load_state() -> dict:
         eid, _, kind = key.partition(":")
         rec = checked.setdefault(eid, {})
         rec.setdefault("since" if kind == "since" else "date", value)
+    state, migrated = cc.migrate_state(state)   # 2026-10-26 스키마 v2(form → lifecycle)
+    if migrated:
+        save_state(state); print("[state] 제안 목록을 스키마 v2 로 변환")
     return state
 
 
@@ -75,7 +79,11 @@ def save_state(state: dict) -> None:
 def load_events() -> dict:
     if not EVENTS.is_file():
         cc.cmd_seed()
-    return json.loads(EVENTS.read_text(encoding="utf-8"))
+    doc, migrated = cc.migrate_doc(json.loads(EVENTS.read_text(encoding="utf-8")))
+    if migrated:   # Release 자산이 v1(사건 단위·form)이면 거래 단위·lifecycle 로 바꿔 바로 저장한다(2026-10-26)
+        EVENTS.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"[events] 사건 파일을 스키마 v2 로 변환 ({len(doc['events'])}건)")
+    return doc
 
 
 def save_events(doc: dict) -> None:
@@ -221,7 +229,7 @@ def task_a(client, system: str, state: dict, events: list[dict], budget: Budget,
                 "id": new_id(state, "A", today), "task": "A", "created": today, "status": "proposed",
                 "payload": ev, "possible_duplicate_of": dup["id"] if dup else None,
                 "unknown_orgs": unk_us + unk_kr,
-                "extra_sources": [{"url": o["url"], "title": o["title"], "form": None, "confidence": None} for o in c.get("others", [])],
+                "extra_sources": [{"url": o["url"], "title": o["title"], "lifecycle": None, "confidence": None} for o in c.get("others", [])],
                 "evidence": {"url": inp["url"] or c["url"], "via": inp["via"], "kind": inp["kind"], "chars": inp["chars"],
                              "sha256": inp["sha256"], "excerpt": inp["text"][:500], "article_url": inp.get("article_url")},
             })
@@ -256,11 +264,11 @@ def dedup_proposals(new: list[dict], pending_old: list[dict]) -> list[dict]:
             kept.append(p)
             continue
         home.setdefault("extra_sources", []).append({"url": p["evidence"]["url"], "title": p["payload"].get("title"),
-                                                     "form": p["payload"].get("form"), "confidence": p["payload"].get("confidence")})
+                                                     "lifecycle": p["payload"].get("lifecycle"), "confidence": p["payload"].get("confidence")})
         home["extra_sources"].extend(p.get("extra_sources", []))
-        # 대표보다 강한 form 이 나오면 메모에 남긴다(바꾸지는 않는다)
-        if p["payload"].get("form") != home["payload"].get("form"):
-            home.setdefault("form_variants", []).append(p["payload"].get("form"))
+        # 다른 기사가 다른 단계로 판정했으면 메모에 남긴다(바꾸지는 않는다)
+        if p["payload"].get("lifecycle") != home["payload"].get("lifecycle"):
+            home.setdefault("lifecycle_variants", []).append(p["payload"].get("lifecycle"))
     if len(kept) != len(new):
         print(f"[A] 중복 제거: {len(new)}건 -> {len(kept)}건 (이전 미결에 합쳐진 것 {into_old}건)")
     return kept
@@ -288,42 +296,44 @@ def find_similar(events: list[dict], ev: dict, days: int = 10) -> dict | None:
     return best
 
 
-# ------------------------------------------------------------------ 기존 사건 점검 — Task B·C 공통 (연구자 결정 2026-10-23)
-# 기존 사건 전부를 매일 검색한다(검색은 모델 호출이 아니다). 처음 보는 기사가 있을 때만 모델이 기존 레코드와 기사의 관계를
-# 판정하고, 그 결과로 B(갱신: 후속 거래·진행 상태 변화)와 C(재검토: 기사의 사실이 기존 코딩과 다름)로 나뉜다.
+# ------------------------------------------------------------------ 기존 거래 점검 — Task B·C 공통 (연구자 결정 2026-10-23, v2 2026-10-26)
+# 기존 거래 전부를 매일 검색한다(검색은 모델 호출이 아니다). 처음 보는 기사가 있을 때만 모델이 기존 레코드와 기사의 관계를
+# 판정하고, 그 결과로 B(갱신: 단계 상향·취소·별개 새 거래)와 C(재검토: 기사의 사실이 기존 코딩과 다름)로 나뉜다.
 # 예전처럼 원 기사를 다시 코딩해 해석 차이로 기존 값을 뒤집자고 하는 일(구 Task C)은 하지 않는다.
 
 
-FOLLOW_SYSTEM = """당신은 한미 AI 협력 사건 데이터베이스의 점검 보조자다. 연구자가 확정한 기존 사건 레코드 하나와, 그 사건에 대해 새로 검색된 기사 하나를 받는다. 기사에 없는 사실을 만들지 않는다.
+FOLLOW_SYSTEM = """당신은 한미 AI 협력 거래 데이터베이스의 점검 보조자다. 연구자가 확정한 기존 거래 레코드 하나와, 그 거래에 대해 새로 검색된 기사 하나를 받는다. 기사에 없는 사실을 만들지 않는다.
 
-기존 코딩은 연구자가 확정한 것이다. 바꾸자고 제안하는 것은 기사에 명시된 사실이 기존 값과 다를 때뿐이며, 그때는 근거 문장을 그대로 인용한다. 같은 사실을 다르게 해석할 여지(예: 금액의 범위를 총액으로 볼지 한쪽 출자분으로 볼지)만으로는 correction 을 내지 않는다. 그런 경우는 relation 을 same_event 로 두고 found 에 두 해석을 적는다.
+레코드 하나는 거래 하나다. 같은 거래가 다음 단계로 가면 새 레코드를 만들지 않고 그 레코드의 lifecycle 을 올린다. 기존 코딩은 연구자가 확정한 것이다. 바꾸자고 제안하는 것은 기사에 명시된 사실이 기존 값과 다를 때뿐이며, 그때는 근거 문장을 그대로 인용한다. 같은 사실을 다르게 해석할 여지(예: 금액의 범위를 총액으로 볼지 한쪽 출자분으로 볼지)만으로는 correction 을 내지 않는다. 그런 경우는 relation 을 same_event 로 두고 found 에 두 해석을 적는다.
 
 [관계 — 하나만 고른다]
-- unrelated: 다른 사건이거나 관련이 없다.
-- same_event: 같은 사건의 추가 보도. 새 사실이 없다.
-- follow_up: 같은 거래의 다음 단계(MOU → 확정계약 → 집행, 추가 투자, 후속 계약). new_event 에 새 사건을 채운다. 연구자에게는 "갱신"으로 보인다.
-- lifecycle: 완료·취소·지연·규모 변경·관계 종료 등 진행 상태의 변화. lifecycle 에 하나를 적는다. 연구자에게는 "갱신"으로 보인다.
-- correction: 기존 레코드의 사실(금액·날짜·주체·형태·track·분야)이 기사와 다르다. updates 에 field/old/new/evidence 를 적는다. 연구자에게는 "재검토"로 보인다.
+- unrelated: 다른 거래이거나 관련이 없다.
+- same_event: 같은 거래의 같은 단계에 대한 추가 보도. 새 사실이 없다. 계획·예정·목표("2027년 양산 예정")만 전하는 기사도 여기다.
+- stage: 같은 거래가 기존 lifecycle 보다 높은 단계에 실제로 도달했다(Signed → Contracted → Operating → Completed). lifecycle 에 새 단계, stage_date 에 그 단계에 도달한 발표일(YYYY-MM-DD)을 적는다. 연구자에게는 "갱신"으로 보인다.
+- canceled: 거래의 철회·취소·무산·관계 종료. canceled 를 true 로, stage_date 에 보도일을 적는다. 지연·축소는 취소가 아니다(same_event + found 에 기록).
+- new_deal: 같은 당사자들의 별개 새 거래(추가 투자, 다른 제품·시설의 계약). 기존 거래의 다음 단계가 아닐 때만. new_event 에 새 거래를 채운다. 연구자에게는 "갱신(새 거래 추가)"로 보인다.
+- correction: 기존 레코드의 사실(금액·날짜·주체·단계·단계 날짜·track·분야)이 기사와 다르다. updates 에 field/old/new/evidence 를 적는다. 연구자에게는 "재검토"로 보인다.
 
 [설명 세 부분 — 연구자가 읽는 글이다. 각각 2~3문장의 완결된 문장으로 쓴다]
-- reason: 왜 이 사건을 다시 보게 됐는가. 어떤 기사가 새로 나왔고, 기존 코딩의 어느 부분과 관계되는가.
+- reason: 왜 이 거래를 다시 보게 됐는가. 어떤 기사가 새로 나왔고, 기존 코딩의 어느 부분과 관계되는가.
 - found: 검색된 기사가 말하는 사실. 기존 레코드와 같은 점과 다른 점을 구분하고, 다른 점은 기사 문장을 인용한다.
-- recommendation: 권장 수정안. 어느 필드를 무엇에서 무엇으로 바꿀지, 또는 후속 사건을 추가할지, 진행 상태를 무엇으로 바꿀지와 그 이유. 바꿀 것이 없으면 "수정 불필요"와 이유.
+- recommendation: 권장 수정안. 어느 단계로 올릴지와 그 날짜, 취소 여부, 또는 어느 필드를 무엇에서 무엇으로 바꿀지와 그 이유. 바꿀 것이 없으면 "수정 불필요"와 이유.
 
-[form·track·금액 규칙 — 코딩 규칙과 같다]
-- 확정계약: 구속력 있는 문서(계약 체결·인수·지분 취득·합작법인 설립·장기 공급·라이선스·협약 체결)가 명시된 것. 금액이 없어도 인정한다.
-- MOU·의향: 비구속 문서(MOU·LOI·업무협약·양해각서·기본합의)이거나 문서 종류가 특정되지 않은 협력 발표.
-- 집행: 앞선 구속력 거래의 이행·완료(인수 완료, 양산 개시, 착공 등).
-- 선언: 정부 공동성명·회담·협의체 출범, 계약 상대가 없는 투자 계획 발표.
-- 형태는 발표 시점의 성격이므로 후속 진행을 이유로 바꾸지 않는다. 진행은 lifecycle 이 맡는다.
+[lifecycle 단계 — 코딩 규칙과 같다. 올라가기만 한다]
+- Rumour: 양측이 서명한 문서가 없다(공동성명·회담·투자 계획 발표·"추진 중").
+- Signed: 양측이 서명한 비구속 문서(MOU·LOI·업무협약·양해각서·기본합의), 문서 종류가 특정되지 않은 공동 발표 파트너십.
+- Contracted: 구속력 있는 문서 체결(계약·인수 계약·지분 투자·합작법인·장기 공급·라이선스·본계약·협약 체결). 금액이 없어도 인정.
+- Operating: 이행이 실제로 시작됨(자금 집행·착공·양산 개시·제품 출시·공급 개시).
+- Completed: 약속한 산출이 완결됨(인수 종결·준공·가동 개시·투자금 전액 집행·납품 완료). 끝이 없는 공급·파트너십은 Operating 에 머문다.
+- 단계 상향은 1차 출처(보도자료·공시·정부 문서)이거나 기사가 그 사실을 명시할 때만. 문면으로 가릴 수 없으면 올리지 않는다.
 - track: 정부-정부 / 정부-민간 / 민간-민간. 당사자만 보고 판정한다.
-- amount_usd_bn: 거래금액만, 억 달러. 기업가치·패키지 총액·투자 계획 총액은 금액이 아니다.
+- amount_usd_bn: 거래금액만, 억 달러. 기업가치·패키지 총액·투자 계획 총액은 금액이 아니다. 단계가 오르며 금액이 확정되면 updates 에 적는다.
 """
 
 FOLLOW_SCHEMA = {
     "type": "object",
     "properties": {
-        "relation": {"type": "string", "enum": ["unrelated", "same_event", "follow_up", "lifecycle", "correction"]},
+        "relation": {"type": "string", "enum": ["unrelated", "same_event", "stage", "canceled", "new_deal", "correction"]},
         "reason": {"type": "string"},
         "found": {"type": "string"},
         "recommendation": {"type": "string"},
@@ -331,18 +341,21 @@ FOLLOW_SCHEMA = {
         "updates": {"type": "array", "items": {"type": "object", "properties": {
             "field": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}, "evidence": {"type": "string"}},
             "required": ["field", "old", "new", "evidence"], "additionalProperties": False}},
-        "lifecycle": {"anyOf": [{"type": "string", "enum": ["announced", "in_progress", "completed", "cancelled", "delayed", "superseded"]}, {"type": "null"}]},
+        "lifecycle": {"anyOf": [{"type": "string", "enum": cc.LIFECYCLES}, {"type": "null"}]},
+        "stage_date": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "단계 도달일 또는 취소 보도일 YYYY-MM-DD"},
+        "canceled": {"type": "boolean"},
         "evidence": {"type": "string"},
         "confidence": {"type": "number"},
     },
-    "required": ["relation", "reason", "found", "recommendation", "new_event", "updates", "lifecycle", "evidence", "confidence"],
+    "required": ["relation", "reason", "found", "recommendation", "new_event", "updates", "lifecycle", "stage_date", "canceled", "evidence", "confidence"],
     "additionalProperties": False,
 }
 
 
 def classify_follow(client, event: dict, meta: dict, body: str) -> tuple[dict, dict]:
     """기존 레코드 + 새 기사 → 관계 판정과 설명 세 부분."""
-    record = {k: event.get(k) for k in ("id", "date", "title", "us_parties", "kr_parties", "track", "form", "sectors", "amount_usd_bn", "lifecycle", "summary")}
+    record = {k: event.get(k) for k in ("id", "date", "title", "us_parties", "kr_parties", "track", "lifecycle", "canceled",
+                                        *cc.STAGE_DATE.values(), "sectors", "amount_usd_bn", "summary")}
     record["note"] = (event.get("note") or "")[:300]
     user = (f"[기존 사건 — 연구자 확정 코딩]\n{json.dumps(record, ensure_ascii=False)}\n\n[새로 검색된 기사]\nURL: {meta.get('url', '')}\n"
             f"게재일(참고): {meta.get('published', '')}\n제목: {meta.get('title', '')}\n\n[본문]\n{body}")
@@ -360,16 +373,17 @@ def classify_follow(client, event: dict, meta: dict, body: str) -> tuple[dict, d
 
 
 def _record_line(e: dict) -> str:
-    return (f"{e.get('date')} · {e.get('form')} · {e.get('track')} · {', '.join(e.get('sectors') or [])} · "
-            f"금액 {e.get('amount_usd_bn')} · 진행 {e.get('lifecycle') or 'announced'}")
+    return (f"{e.get('date')} · {e.get('lifecycle')}{' · 취소' if e.get('canceled') else ''} · {e.get('track')} · {', '.join(e.get('sectors') or [])} · "
+            f"금액 {e.get('amount_usd_bn')}")
 
 
-# C 재검토가 고칠 수 있는 필드(코드북: 금액·날짜·주체·형태·track·분야). 모델이 낸 다른 키는 버린다.
-CORRECTABLE = ("date", "title", "form", "track", "sectors", "us_parties", "kr_parties", "amount_usd_bn", "amount_krw_bn", "amount_is_estimate", "summary")
+# C 재검토가 고칠 수 있는 필드(코드북: 금액·날짜·주체·단계·단계 날짜·track·분야). 모델이 낸 다른 키는 버린다.
+CORRECTABLE = ("date", "title", "lifecycle", "canceled", *cc.STAGE_DATE.values(), "date_canceled", "track", "sectors", "us_parties", "kr_parties",
+               "amount_usd_bn", "amount_krw_bn", "amount_is_estimate", "summary")
 
 
 def _coerce(field: str, value):
-    """모델 출력은 문자열이다. 숫자·목록 필드는 사건 레코드의 자료형으로 되돌린다."""
+    """모델 출력은 문자열이다. 숫자·목록 필드는 거래 레코드의 자료형으로 되돌린다."""
     if value in (None, "", "null", "None"):
         return None
     if field in ("amount_usd_bn", "amount_krw_bn", "confidence"):
@@ -379,6 +393,10 @@ def _coerce(field: str, value):
             return value
     if field == "amount_is_estimate":
         return str(value).lower() in ("true", "1", "yes", "예")
+    if field == "canceled":
+        return 1 if str(value).lower() in ("true", "1", "yes", "예") else 0
+    if field == "lifecycle":
+        return value if value in cc.LIFECYCLES else cc.FORM_TO_LIFECYCLE.get(value, value)
     if field == "sectors" and isinstance(value, str):
         return [s.strip() for s in re.split(r"[,、·/]", value) if s.strip()]
     if field in ("us_parties", "kr_parties"):
@@ -409,18 +427,22 @@ def _followup_proposal(state: dict, e: dict, rel: dict, url: str, body: str, tod
         if not diffs or _already_pending(state, e["id"], "C"):
             return None
         return dict(base, id=new_id(state, "C", today), task="C", payload={"diffs": diffs})
-    new_event = rel.get("new_event") if relation == "follow_up" else None
+    new_event = rel.get("new_event") if relation == "new_deal" else None
     if new_event:
         new_event["us_parties"], _ = cc.canonical_parties(new_event.get("us_parties", []))
         new_event["kr_parties"], _ = cc.canonical_parties(new_event.get("kr_parties", []))
-    lifecycle = rel.get("lifecycle") if relation == "lifecycle" else None
-    if lifecycle and lifecycle == (e.get("lifecycle") or "announced"):
+    # 단계 상향: 기존보다 높은 단계만. 같거나 낮으면 제안하지 않는다(내리는 것은 correction 의 몫)
+    lifecycle = rel.get("lifecycle") if relation == "stage" else None
+    if lifecycle and cc.LIFECYCLES.index(lifecycle) <= cc.LIFECYCLES.index(e.get("lifecycle") or "Rumour"):
         lifecycle = None
-    if not new_event and not lifecycle:
+    canceled = bool(rel.get("canceled")) if relation == "canceled" and not e.get("canceled") else False
+    stage_date = (rel.get("stage_date") or "")[:10] or None
+    if not new_event and not lifecycle and not canceled:
         return None
     if _already_pending(state, e["id"], "B"):
         return None
-    return dict(base, id=new_id(state, "B", today), task="B", payload={"new_event": new_event, "updates": [], "lifecycle": lifecycle})
+    return dict(base, id=new_id(state, "B", today), task="B",
+                payload={"new_event": new_event, "updates": [], "lifecycle": lifecycle, "stage_date": stage_date, "canceled": int(canceled)})
 
 
 def _since_for(state: dict, e: dict) -> str:
@@ -538,7 +560,7 @@ def read_issue_decisions() -> tuple[dict[str, dict], list[dict]]:
 
 D_SYSTEM = """당신은 한미 AI 협력 사건 데이터베이스의 보조자다. 모델이 낸 제안(사건 코딩)과 연구자의 의견을 받아, 의견에 담긴 수정 지시를 사건 값에 반영한 결과를 돌려준다.
 규칙: 연구자 의견이 모델 판정보다 우선한다. 의견이 언급하지 않은 필드는 바꾸지 않는다. 의견이 "맞다", "승인" 처럼 수정 지시가 아니면 아무것도 바꾸지 않는다.
-형태(form)는 MOU·의향/선언/집행/확정계약, track 은 정부-정부/정부-민간/민간-민간, 분야는 정해진 목록, 금액은 억 달러 숫자. 바꾼 필드마다 changes 에 field/old/new 를 적는다."""
+lifecycle 은 Rumour/Signed/Contracted/Operating/Completed(거래가 도달한 단계), canceled 는 true/false, track 은 정부-정부/정부-민간/민간-민간, 분야는 정해진 목록, 금액은 억 달러 숫자. 바꾼 필드마다 changes 에 field/old/new 를 적는다."""
 
 D_SCHEMA = {
     "type": "object",
@@ -606,15 +628,20 @@ def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
         ev.setdefault("id", f"{(ev.get('date') or today).replace('-', '')}-{hashlib.sha1((ev.get('date', '') + ev.get('title', '')).encode()).hexdigest()[:8]}")
         # track 은 기관 마스터의 type 으로 기계적으로 정한다(코드북). 마스터에 없는 기관뿐이면 모델 값을 둔다.
         ev["track"] = cc.derive_track(ev.get("us_parties", []), ev.get("kr_parties", [])) or ev.get("track")
-        ev.update({"status": "confirmed", "coded_by": cc.MODEL, "approved_by": "researcher", "approved_on": today,
-                   "administration": cc.administration(ev.get("date") or today), "lifecycle": ev.get("lifecycle") or "announced", "updates": [],
+        lifecycle = ev.get("lifecycle") if ev.get("lifecycle") in cc.LIFECYCLES else "Rumour"
+        stages = {col: None for col in cc.STAGE_DATE.values()}
+        stages[cc.STAGE_DATE[lifecycle]] = ev.get("date") or today   # 첫 관측 단계의 날짜 = 거래의 date
+        ev.update({"schema_version": cc.SCHEMA_VERSION, "status": "confirmed", "coded_by": cc.MODEL, "approved_by": "researcher", "approved_on": today,
+                   "administration": cc.administration(ev.get("date") or today), "lifecycle": lifecycle, **stages,
+                   "canceled": 1 if ev.get("canceled") in (True, 1, "1", "true") else 0, "date_canceled": (ev.get("date") if ev.get("canceled") in (True, 1, "1", "true") else None),
+                   "merged_from": [], "updates": [],
                    # 1순위 출처(공식 문서·보도자료면 그것) + 기사(보조). 연구자 지시 2026-10-24
                    "sources": ([{"url": src["url"], "grade": ev.get("source_grade")}]
                                + ([{"url": src["article_url"], "grade": 2}] if src.get("article_url") and src["article_url"] != src["url"] else [])) if src else [],
                    "proposal_id": p["id"]})
         for k in ("summary", "note"):
             ev.setdefault(k, "")
-        ev.setdefault("prior_event_id", None)
+        ev.pop("prior_event_hint", None); ev.pop("form", None)
         return ev
     if p["task"] == "A":
         ev = stamp(p["payload"], p["evidence"])
@@ -633,12 +660,20 @@ def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
         target["researcher_note"] = ((target.get("researcher_note") or "") + f" [{today}] " + note).strip()
     if p["task"] == "B":
         pl, done = p["payload"], []
-        if pl.get("new_event"):
-            ev = stamp(pl["new_event"], p["evidence"]); ev["prior_event_id"] = target["id"]
-            events.append(ev); done.append(f"후속 사건 추가 {ev['title']}")
-        if pl.get("lifecycle"):
-            target.setdefault("updates", []).append({"date": today, "field": "lifecycle", "old": target.get("lifecycle"), "new": pl["lifecycle"], "url": p["evidence"]["url"], "proposal_id": p["id"]})
-            target["lifecycle"] = pl["lifecycle"]; done.append(f"lifecycle={pl['lifecycle']}")
+        stage_date = (pl.get("stage_date") or today)[:10]
+        if pl.get("new_event"):   # 같은 당사자의 별개 새 거래
+            ev = stamp(pl["new_event"], p["evidence"]); ev["related_to"] = target["id"]
+            events.append(ev); done.append(f"새 거래 추가 {ev['title']}")
+        new_stage = pl.get("lifecycle")
+        if new_stage in cc.LIFECYCLES and cc.LIFECYCLES.index(new_stage) > cc.LIFECYCLES.index(target.get("lifecycle") or "Rumour"):
+            target.setdefault("updates", []).append({"date": today, "field": "lifecycle", "old": target.get("lifecycle"), "new": new_stage,
+                                                     "stage_date": stage_date, "url": p["evidence"]["url"], "proposal_id": p["id"]})
+            target["lifecycle"] = new_stage; target[cc.STAGE_DATE[new_stage]] = stage_date
+            target["sources"] = (target.get("sources") or []) + [{"url": p["evidence"]["url"], "grade": None}]
+            done.append(f"lifecycle={new_stage} ({stage_date})")
+        if pl.get("canceled") and not target.get("canceled"):
+            target.setdefault("updates", []).append({"date": today, "field": "canceled", "old": 0, "new": 1, "stage_date": stage_date, "url": p["evidence"]["url"], "proposal_id": p["id"]})
+            target["canceled"] = 1; target["date_canceled"] = stage_date; done.append(f"canceled=1 ({stage_date})")
         return f"{p['id']}: " + ", ".join(done or ["반영할 내용 없음"])
     if p["task"] == "C":
         done = []
@@ -648,6 +683,12 @@ def apply_proposal(p: dict, doc: dict, today: str, note: str = "") -> str:
             old = target.get(d["field"]); target[d["field"]] = d["new"]
             target.setdefault("updates", []).append({"date": today, "field": d["field"], "old": old, "new": d["new"], "evidence": d.get("reason", ""), "url": p["evidence"]["url"], "proposal_id": p["id"]})
             done.append(f"{d['field']}: {old} → {d['new']}")
+            if d["field"] == "lifecycle" and d["new"] in cc.LIFECYCLES and not target.get(cc.STAGE_DATE[d["new"]]):
+                target[cc.STAGE_DATE[d["new"]]] = target.get("date")   # 단계 정정이면 그 단계의 날짜도 있어야 한다
+        if any(d["field"] in cc.STAGE_DATE.values() for d in p["payload"]["diffs"]):
+            dates = [target.get(c) for c in cc.STAGE_DATE.values() if target.get(c)]
+            if dates and min(dates) != target.get("date"):
+                target["date"] = min(dates); target["administration"] = cc.administration(target["date"])
         if any(d["field"] in ("us_parties", "kr_parties") for d in p["payload"]["diffs"]):
             track = cc.derive_track(target.get("us_parties", []), target.get("kr_parties", []))   # 주체가 바뀌면 track 도 마스터로 다시
             if track and track != target.get("track"):
